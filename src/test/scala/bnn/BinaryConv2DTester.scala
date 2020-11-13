@@ -19,9 +19,10 @@ class BinaryConv2DTester(
   val memDepth = math.ceil((inputW - kernelW).toFloat / stride.toFloat).toInt
 
   poke(conv.io.outData.ready, true)
+  poke(conv.io.inData.valid, false)
 
   expect(conv.io.isInit, true)
-  step(memDepth)
+  step(memDepth + 2)
   expect(conv.io.isInit, false)
 
   for {
@@ -29,13 +30,19 @@ class BinaryConv2DTester(
     x <- 0 until inputW
   } {
     expect(conv.io.inData.ready, true)
-    poke(conv.io.inData.valid, true)
-    poke(conv.io.inData.bits.valid, true)
     (conv.io.inData.bits.bits zip images(y)(x)).foreach{ case (in, b) => poke(in, b) }
+    poke(conv.io.inData.bits.valid, true)
+    poke(conv.io.inData.bits.left, x == 0)
+    poke(conv.io.inData.bits.right, x == inputW - 1)
+    poke(conv.io.inData.bits.topLeft, x == 0 && y == 0)
+    poke(conv.io.inData.bits.bottomRight, x == inputW - 1 && y == inputH - 1)
+    poke(conv.io.inData.valid, true)
+
     step(1)
   }
 
-
+  poke(conv.io.inData.valid, false)
+  step(1)
 
   for(_ <- 0 until weightCycles) {
     poke(conv.io.inData.valid, false)
