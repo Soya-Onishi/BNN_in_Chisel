@@ -1,20 +1,23 @@
 package bnn
 
-import chisel3.stage.ChiselGeneratorAnnotation
+import chisel3._
+import chisel3.stage.{ChiselGeneratorAnnotation, ChiselStage}
+
 import scala.util.Random
 
 object BNNMain extends App {
   val kernelH = 3
   val kernelW = 3
   val stride = 1
-  val weightNum = 9
-  val cycles = 3
-  val inputShape = (48, 48, 3)
+  val weightNum = 64
+  val cycles = 8
+  val inputC = 32
+  val inputShape = (23, 23, inputC)
 
   val rnd = new Random(0)
   val kernelSize = (kernelH, kernelW)
   val weightss = Seq.fill(weightNum)(Seq.fill(kernelH * kernelW)(rnd.nextBoolean()))
-  val biases = Seq.fill(weightNum)(rnd.nextInt(255))
+  val biases = weightss.map(weights => rnd.nextInt(weights.count(identity) * inputC))
 
   val annon = ChiselGeneratorAnnotation(() =>
     new BinaryConv2D(
@@ -23,6 +26,53 @@ object BNNMain extends App {
       bias = biases,
       inputShape = inputShape,
       cyclesForAllWeights = cycles,
+      stride = stride
+    )
+  )
+
+  (new chisel3.stage.ChiselStage).execute(
+    Array("-X", "verilog"),
+    Seq(annon)
+  )
+}
+
+object MaxPoolingGen extends App {
+  val kernelH = 3
+  val kernelW = 3
+  val stride = 1
+  val inputC = 32
+  val inputShape = (23, 23, inputC)
+
+  val annon = ChiselGeneratorAnnotation(() =>
+    new BinaryMaxPooling2D(
+      kernelSize = (3, 3),
+      inputSize = inputShape,
+      stride = stride
+    )
+  )
+
+  (new ChiselStage).execute(
+    Array("-X", "verilog"),
+    Seq(annon)
+  )
+}
+
+object WindowBufferGen extends App {
+  val kernelH = 3
+  val kernelW = 3
+  val kernelSize = (kernelH, kernelW)
+  val stride = 1
+  val weightNum = 64
+  val cycles = 8
+  val inputShape = (23, 23)
+
+  val data = Vec(32, Bool())
+
+  val annon = ChiselGeneratorAnnotation(() =>
+    new WindowBuffer(
+      kernelSize = kernelSize,
+      gen = data,
+      inputSize = inputShape,
       stride = stride
     )
   )

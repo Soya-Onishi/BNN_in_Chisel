@@ -41,7 +41,7 @@ class WindowBuffer[T <: Data](gen: T, inputSize: (Int, Int), kernelSize: (Int, I
   )
 
   val buffersOpt =
-    if(memDepth > 0) Some(Vector.fill(windowH)(Mem(memDepth, Pixel[T](gen))))
+    if(memDepth > 0) Some(Vector.fill(windowH)(SyncReadMemOnePort(memDepth, Pixel[T](gen))))
     else             None
   val memIdx = RegInit(0.U(requiredLength(memDepth).W))
   val xstrideCount = RegInit(0.U(requiredLength(xMaxApplyCount).W))
@@ -68,18 +68,21 @@ class WindowBuffer[T <: Data](gen: T, inputSize: (Int, Int), kernelSize: (Int, I
   io.window.bits   := VecInit(window.sliding(stride, stride).flatMap(arr => verticalFlatten(arr).take(kernelW)).toSeq)
   io.isLeft        := xstrideCount === 0.U
   io.isRight       := xstrideCount === (xMaxApplyCount - 1).U
-  io.isTopLeft     := (xstrideCount === 0.U) | (ystrideCount === 0.U)
-  io.isBottomRight := (xstrideCount === (xMaxApplyCount - 1).U) | (ystrideCount === (yMaxApplyCount - 1).U)
+  io.isTopLeft     := (xstrideCount === 0.U) & (ystrideCount === 0.U)
+  io.isBottomRight := (xstrideCount === (xMaxApplyCount - 1).U) & (ystrideCount === (yMaxApplyCount - 1).U)
 
   val requireStride = dontTouch(WireInit(io.nextPixel.valid | io.forceShift))
+  val nextIdxCalc = memIdx + 1.U
+  val nextIdx = dontTouch(WireInit(Mux(nextIdxCalc === memDepth.U, 0.U, nextIdxCalc)))
+  val readIdx = dontTouch(WireInit(Mux(requireStride, nextIdx, memIdx)))
+  val bufferElemsOpt = buffersOpt.map(_.map(buf => buf.read(readIdx)))
   when(requireStride) {
-    val nextIdx = memIdx + 1.U
-    memIdx := Mux(nextIdx === memDepth.U, 0.U, nextIdx)
+    memIdx := nextIdx
 
     val partitioned = window.sliding(stride, stride).toSeq
     val heads = WireInit(VecInit(partitioned.map(_.map(_.head)).tail.flatten))
 
-    val lasts = buffersOpt.map(_.map(buf => buf.read(memIdx))).getOrElse(heads ++ io.nextPixel.bits)
+    val lasts = bufferElemsOpt.getOrElse(heads ++ io.nextPixel.bits)
     val tails = partitioned.flatMap(_.map(_.tail))
     val nextWindow = (tails zip lasts).map{ case (row, l) => row :+ l }.map(row => VecInit(row))
     window := VecInit(nextWindow)
