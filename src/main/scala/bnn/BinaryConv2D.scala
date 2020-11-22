@@ -62,7 +62,7 @@ class BinaryConv2D(
             val activatedBits = (weightss, biases, bitCounters).zipped.map {
               case (weights, bias, bitCounter) =>
                 val bits = (weights zip window.io.window.bits).flatMap {
-                  case (weight, pixels) => if (weight) pixels.bits else VecInit(Seq.fill(pixels.bits.length)(false.B))
+                  case (weight, pixels) => pixels.bits.map(_ ^ weight.asBool())
                 }
 
                 bitCounter.io.in := VecInit(bits)

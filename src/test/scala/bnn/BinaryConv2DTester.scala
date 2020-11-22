@@ -188,7 +188,7 @@ class BinaryConv2DMultiCycleTester(
           }
         }
 
-        val applied = weights.map { weight => (weight zip cropped).collect { case (w, p) if w => p } }
+        val applied = weights.map { weight => (weight zip cropped).map { case (w, p) => p.map(_ ^ w) } }
         val expected = applied.map(convolution).zip(bias).map { case (c, b) => c > b }
 
         expect(conv.io.outData.bits.left, outX == 0, s"conv for [$imageX, $imageY]")

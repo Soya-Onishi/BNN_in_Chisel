@@ -19,7 +19,8 @@ object BNNMain extends App {
   val weightss = Seq.fill(weightNum)(Seq.fill(kernelH * kernelW)(rnd.nextBoolean()))
   val biases = weightss.map(weights => rnd.nextInt(weights.count(identity) * inputC))
 
-  val annon = ChiselGeneratorAnnotation(() =>
+  val simplifyMem = firrtl.stage.RunFirrtlTransformAnnotation(new firrtl.transforms.SimplifyMems)
+  val generator = ChiselGeneratorAnnotation(() =>
     new BinaryConv2D(
       kernelSize = (3, 3),
       weights = weightss,
@@ -30,9 +31,11 @@ object BNNMain extends App {
     )
   )
 
+  val annons = Seq(simplifyMem, generator)
+
   (new chisel3.stage.ChiselStage).execute(
     Array("-X", "verilog"),
-    Seq(annon)
+    annons
   )
 }
 

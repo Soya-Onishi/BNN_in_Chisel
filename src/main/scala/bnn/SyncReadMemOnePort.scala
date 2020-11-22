@@ -1,8 +1,11 @@
 package bnn
 
 import chisel3._
+import chisel3.util.experimental.loadMemoryFromFile
+import firrtl.annotations.MemoryLoadFileType
+import java.nio.file.Path
 
-class SyncReadMemOnePort[T <: Data](size: Int, gen: T) extends Module {
+class SyncReadMemOnePort[T <: Data](size: Int, gen: T, inits: Option[Path]) extends Module {
   val addrData = UInt(requiredLength(size).W)
 
   val io = IO(new Bundle {
@@ -27,6 +30,8 @@ class SyncReadMemOnePort[T <: Data](size: Int, gen: T) extends Module {
     io.wdata := data
   }
 
+  inits.foreach(path => loadMemoryFromFile(mem, path.toAbsolutePath.toString, MemoryLoadFileType.Binary))
+
   io.rdata := mem.read(io.raddr)
   when(io.wen) {
     mem.write(io.waddr, io.wdata)
@@ -34,8 +39,10 @@ class SyncReadMemOnePort[T <: Data](size: Int, gen: T) extends Module {
 }
 
 object SyncReadMemOnePort {
-  def apply[T <: Data](size: Int, gen: T): SyncReadMemOnePort[T] = {
-    val module = Module(new SyncReadMemOnePort[T](size, gen))
+  def apply[T <: Data](size: Int, gen: T): SyncReadMemOnePort[T] = apply(size, gen, None)
+  def apply[T <: Data](size: Int, gen: T, path: Path): SyncReadMemOnePort[T] = apply(size, gen, Some(path))
+  def apply[T <: Data](size: Int, gen: T, path: Option[Path]): SyncReadMemOnePort[T] = {
+    val module = Module(new SyncReadMemOnePort[T](size, gen, path))
 
     module.io.raddr := DontCare
 
