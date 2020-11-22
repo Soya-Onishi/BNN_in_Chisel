@@ -10,7 +10,7 @@ abstract class BinaryActivation[InType <: Data, OutType <: Data](
   biases: Seq[Int],
   inType: InType,
   outType: OutType
-) extends Module {
+) extends BinaryLayer {
   assert(inputSize <= channels)
   val countsForAllChannels = math.ceil(channels.toFloat / inputSize.toFloat).toInt
 
