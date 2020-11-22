@@ -13,7 +13,7 @@ class BinaryActivationConv2D(
   inputWidth,
   biases,
   Pixel(Vec(inputSize, UInt(inputWidth.W))),
-  Pixel(Vec(inputSize, Bool()))
+  Pixel(Vec(channels, Bool()))
 ) {
   val isLeft        = Reg(Bool())
   val isRight       = Reg(Bool())
@@ -27,6 +27,7 @@ class BinaryActivationConv2D(
   io.outData.bits.right       := isRight
   io.outData.bits.topLeft     := isTopLeft
   io.outData.bits.bottomRight := isBottomRight
+  io.outData.bits.valid       := true.B
 
   elaborate()
 

@@ -3,20 +3,20 @@ package bnn
 import chisel3._
 import chisel3.util._
 
-abstract class BinaryActivation[InType <: Data, OutType <: Data](
+abstract class BinaryActivation[InputType <: Data, OutputType <: Data](
   channels: Int,
   inputSize: Int,
   inputWidth: Int,
   biases: Seq[Int],
-  inType: InType,
-  outType: OutType
+  inputType: InputType,
+  outputType: OutputType
 ) extends BinaryLayer {
   assert(inputSize <= channels)
   val countsForAllChannels = math.ceil(channels.toFloat / inputSize.toFloat).toInt
 
   val io = IO(new Bundle {
-    val inData = Flipped(DecoupledIO(inType))
-    val outData = DecoupledIO(outType)
+    val inData = Flipped(DecoupledIO(inputType))
+    val outData = DecoupledIO(outputType)
   })
 
   val receiving :: activation :: sending :: Nil = Enum(3)
@@ -25,7 +25,7 @@ abstract class BinaryActivation[InType <: Data, OutType <: Data](
   val inputBuffer = Reg(Valid(Vec(inputSize, UInt(inputWidth.W))))
   val outputBuffer = Reg(Vec(countsForAllChannels, Vec(inputSize, Bool())))
 
-  val biasess = VecInit(biases.sliding(inputSize, inputSize).toSeq.map(biases => VecInit(biases.map(_.asUInt()))))
+  val biasess = VecInit(biases.sliding(inputSize, inputSize).toSeq.map(biases => VecInit(biases.map(_.asUInt(inputWidth.W)))))
   val nextIdxTmp = biasIdx + 1.U
   val nextIdx = WireInit(Mux(
     globalState === activation,
@@ -59,6 +59,7 @@ abstract class BinaryActivation[InType <: Data, OutType <: Data](
 
   protected def sendingState(): Unit = {
     io.outData.valid := true.B
+
     when(io.outData.ready) {
       globalState := Mux(inputBuffer.valid, activation, receiving)
     }

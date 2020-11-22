@@ -21,13 +21,12 @@ object BNNMain extends App {
 
   val simplifyMem = firrtl.stage.RunFirrtlTransformAnnotation(new firrtl.transforms.SimplifyMems)
   val generator = ChiselGeneratorAnnotation(() =>
-    new BinaryConv2D(
+    new BinaryConv2DBool(
       kernelSize = (3, 3),
       weights = weightss,
       inputShape = inputShape,
       countsForAllWeights = cycles,
       stride = stride,
-      inputType = Bool()
     )
   )
 

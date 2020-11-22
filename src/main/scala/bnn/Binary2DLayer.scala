@@ -38,7 +38,7 @@ abstract class Binary2DLayer[InputType <: Data, OutputType <: Data](
 
   val isBottomRight = RegInit(false.B)
 
-  io.inData.ready             := !isInputBufferFull
+  io.inData.ready             := !isInputBufferFull & globalState =/= init
   io.outData.valid            := false.B
   io.outData.bits.bits        := DontCare
   io.outData.bits.valid       := false.B
