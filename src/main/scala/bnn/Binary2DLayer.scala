@@ -3,12 +3,14 @@ package bnn
 import chisel3._
 import chisel3.util._
 
-abstract class Binary2DLayer(
+abstract class Binary2DLayer[InputType <: Data, OutputType <: Data](
   kernelSize: (Int, Int),
   inputSize: (Int, Int, Int),
-  outputChannel: Int,
-  stride: Int
-) extends Module {
+  outputSize: Int,
+  stride: Int,
+  inputType: InputType,
+  outputType: OutputType
+) extends BinaryLayer {
   val (kernelH, kernelW) = kernelSize
   val (inputH, inputW, inputC) = inputSize
   val windowW = math.ceil(kernelW.toFloat / stride.toFloat).toInt
@@ -18,12 +20,12 @@ abstract class Binary2DLayer(
   require(stride <= kernelW)
 
   val io = IO(new Bundle {
-    val inData = Flipped(Decoupled(Pixel(Vec(inputC, Bool()))))
-    val outData = Decoupled(Pixel(Vec(outputChannel, UInt())))
+    val inData = Flipped(DecoupledIO(Pixel(Vec(inputC, inputType))))
+    val outData = DecoupledIO(Pixel(Vec(outputSize, outputType)))
     val isInit = Output(Bool())
   })
 
-  val init :: wait_executable :: execute_state :: Nil = Enum(3)
+  val init :: wait_executable :: execute_state :: wait_to_next :: Nil = Enum(4)
   val wait_to_ready :: force_shift :: Nil = Enum(2)
   val globalState = RegInit(init)
   val shiftPolicy = RegInit(wait_to_ready)
@@ -33,6 +35,8 @@ abstract class Binary2DLayer(
   val isInputBufferFull = WireInit(inputBufferIdx === stride.U)
   val nextInputBufferIdx = WireInit(inputBufferIdx + 1.U)
   val reachBottomRight = RegInit(false.B)
+
+  val isBottomRight = RegInit(false.B)
 
   io.inData.ready             := !isInputBufferFull
   io.outData.valid            := false.B
@@ -62,15 +66,10 @@ abstract class Binary2DLayer(
 
   protected def compile(): Unit = {
     switch(globalState) {
-      is(init) {
-        initState()
-      }
-      is(wait_executable) {
-        waitToExecute()
-      }
-      is(execute_state) {
-        executionState()
-      }
+      is(init) { initState() }
+      is(wait_executable) { waitToExecute() }
+      is(execute_state) { executionState() }
+      is(wait_to_next) { waitToNext() }
     }
   }
 
@@ -95,4 +94,34 @@ abstract class Binary2DLayer(
   }
 
   protected def executionState(): Unit
+
+  private def waitToNext(): Unit = {
+    val readyForNextPixel = ((nextInputBufferIdx === stride.U) & io.inData.valid) | isInputBufferFull
+    val readyToTransit = WireInit(false.B)
+
+    switch(shiftPolicy) {
+      is(wait_to_ready) {
+        when(readyForNextPixel) {
+          val reachBottomRight = nextPixelBits.foldLeft(false.B) { case (acc, pixel) => acc | pixel.bottomRight }
+
+          window.io.nextPixel.valid := true.B
+          readyToTransit            := true.B
+          shiftPolicy               := Mux(reachBottomRight, force_shift, shiftPolicy)
+        }
+      }
+      is(force_shift) {
+        val topLeftInBuffer = inputBuffers.foldLeft(false.B) { case (acc, pixel) => acc | pixel.topLeft }
+        val transit = (inputBufferIdx =/= 0.U) | topLeftInBuffer
+
+        window.io.forceShift := true.B
+        readyToTransit       := true.B
+        shiftPolicy          := Mux(transit, wait_to_ready, force_shift)
+      }
+    }
+
+    when(readyToTransit) {
+      inputBufferIdx := 0.U
+      globalState    := Mux(isBottomRight, wait_executable, execute_state)
+    }
+  }
 }

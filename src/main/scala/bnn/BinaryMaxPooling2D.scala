@@ -7,11 +7,13 @@ class BinaryMaxPooling2D(
   kernelSize: (Int, Int),
   inputSize: (Int, Int, Int),
   stride: Int
-) extends Binary2DLayer(
+) extends Binary2DLayer[Bool, Bool](
   kernelSize,
   inputSize,
   inputSize._3,
-  stride
+  stride,
+  Bool(),
+  Bool()
 ) {
   val exec_pooling :: post_process :: Nil = Enum(2)
   val runningState = RegInit(exec_pooling)

@@ -24,10 +24,10 @@ object BNNMain extends App {
     new BinaryConv2D(
       kernelSize = (3, 3),
       weights = weightss,
-      bias = biases,
       inputShape = inputShape,
       countsForAllWeights = cycles,
-      stride = stride
+      stride = stride,
+      inputType = Bool()
     )
   )
 
