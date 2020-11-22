@@ -6,7 +6,7 @@ import chisel3.iotesters
 import chisel3.iotesters.{ChiselFlatSpec, PeekPokeTester}
 
 class BinaryConv2DTester(
-  conv: BinaryConv2D[Bool],
+  conv: BinaryConv2DBool,
   weightss: Seq[Seq[Boolean]],
   inputShape: (Int, Int, Int),
   stride: Int,
@@ -142,7 +142,7 @@ class BNNTestSpec extends ChiselFlatSpec {
     val backend = "treadle"
     val args = Array("--backend-name", backend, "--generate-vcd-output", "on")
 
-    lazy val conv = new BinaryConv2D(kernelSize, weights, inputShape, weightsCycle, stride, Bool())
+    lazy val conv = new BinaryConv2DBool(kernelSize, weights, inputShape, weightsCycle, stride)
     iotesters.Driver.execute(args, () => conv) {
       c => new BinaryConv2DTester(c, weights, inputShape, stride, idleCycle, 1, weightsCycle, rnd)
     } should be(true)
@@ -166,7 +166,7 @@ class BNNTestSpec extends ChiselFlatSpec {
     val backend = "treadle"
     val args = Array("--backend-name", backend, "--generate-vcd-output", "on")
 
-    lazy val conv = new BinaryConv2D(kernelSize, weights, inputShape, weightsCycle, stride, Bool())
+    lazy val conv = new BinaryConv2DBool(kernelSize, weights, inputShape, weightsCycle, stride)
     iotesters.Driver.execute(args, () => conv) {
       c => new BinaryConv2DTester(c, weights, inputShape, stride, idleCycle, 2, weightsCycle, rnd)
     } should be(true)

@@ -4,7 +4,7 @@ import chisel3._
 import chisel3.util.{Decoupled, Enum, Valid}
 import chisel3.util.{SwitchContext, is, switch}
 
-class BinaryConv2D[InputType <: Data](
+abstract class BinaryConv2D[InputType <: Data] (
   kernelSize: (Int, Int),
   weights: Seq[Seq[Boolean]],
   inputShape: (Int, Int, Int),
@@ -18,6 +18,21 @@ class BinaryConv2D[InputType <: Data](
   stride,
   inputType,
   UInt(requiredLength(kernelSize._1 * kernelSize._2 * inputShape._3).W)
+)
+
+class BinaryConv2DBool(
+  kernelSize: (Int, Int),
+  weights: Seq[Seq[Boolean]],
+  inputShape: (Int, Int, Int),
+  countsForAllWeights: Int,
+  stride: Int,
+) extends BinaryConv2D[Bool](
+  kernelSize,
+  weights,
+  inputShape,
+  countsForAllWeights,
+  stride,
+  Bool()
 ) {
   val weightsPerApply = math.ceil(weights.length.toFloat / countsForAllWeights.toFloat).toInt
   val countsForApplyingAllWeights = math.ceil(weights.length.toFloat / weightsPerApply.toFloat).toInt
@@ -31,12 +46,6 @@ class BinaryConv2D[InputType <: Data](
   )
 
   val weightIdx = RegInit(0.U(requiredLength(countsForAllWeights).W))
-  val activatedBuffer = Reg(Vec(countsForApplyingAllWeights, Vec(weightsPerApply, Bool())))
-
-  val exec_conv :: wait_next :: Nil = Enum(2)
-  val runningState = RegInit(exec_conv)
-  val sendBitsDone = RegInit(false.B)
-  val sendNextPixelDone = RegInit(false.B)
 
   compile()
 
@@ -85,52 +94,4 @@ class BinaryConv2D[InputType <: Data](
       inputBufferIdx := 0.U
     }
   }
-
-  /*
-  private def postProcess(): Unit = {
-    val bits = VecInit(activatedBuffer.flatten)
-    val pixel = Wire(Pixel(Vec(bits.length, Bool())))
-    pixel.bits := bits
-    pixel.valid := true.B
-    pixel.left := isBufferLeft
-    pixel.right := isBufferRight
-    pixel.topLeft := isBufferTopLeft
-    pixel.bottomRight := isBufferBottomRight
-
-    when(io.outData.ready & !sendBitsDone) {
-      io.outData.bits := pixel
-      io.outData.valid := true.B
-      sendBitsDone := true.B
-    }
-
-    val readyForNextPixel = ((nextInputBufferIdx === stride.U) & io.inData.valid) | isInputBufferFull
-    when(shiftPolicy === wait_to_ready & readyForNextPixel & !sendNextPixelDone) {
-      window.io.nextPixel.valid := true.B
-      inputBufferIdx := 0.U
-      sendNextPixelDone := true.B
-
-      val reachBottomRight = nextPixelBits.foldLeft(false.B) { case (acc, pixel) => acc | pixel.bottomRight }
-      shiftPolicy := Mux(reachBottomRight, force_shift, shiftPolicy)
-    }
-
-    when(shiftPolicy === force_shift & !sendNextPixelDone) {
-      window.io.forceShift := true.B
-      sendNextPixelDone := true.B
-
-      val topLeftInBuffer = inputBuffers.foldLeft(false.B) { case (acc, pixel) => acc | pixel.topLeft }
-      val transit = (inputBufferIdx =/= 0.U) | topLeftInBuffer
-      when(transit) {
-        shiftPolicy := wait_to_ready
-      }
-    }
-
-    when(sendBitsDone & sendNextPixelDone) {
-      runningState := exec_conv
-
-      when(pixel.bottomRight) {
-        globalState := wait_executable
-      }
-    }
-  }
-  */
 }

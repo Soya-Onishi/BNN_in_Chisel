@@ -48,7 +48,7 @@ abstract class Binary2DLayer[InputType <: Data, OutputType <: Data](
   io.outData.bits.bottomRight := false.B
   io.isInit                   := globalState === init
 
-  val window = Module(new WindowBuffer(Vec(inputC, Bool()), (inputH, inputW), kernelSize, stride))
+  val window = Module(new WindowBuffer(Vec(inputC, inputType), (inputH, inputW), kernelSize, stride))
   val nextPixelBits = Mux(
     io.inData.valid & nextInputBufferIdx === stride.U,
     VecInit(inputBuffers.init :+ io.inData.bits),
