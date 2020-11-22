@@ -26,7 +26,7 @@ object BNNMain extends App {
       weights = weightss,
       bias = biases,
       inputShape = inputShape,
-      cyclesForAllWeights = cycles,
+      countsForAllWeights = cycles,
       stride = stride
     )
   )

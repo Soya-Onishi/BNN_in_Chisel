@@ -19,7 +19,7 @@ abstract class Binary2DLayer(
 
   val io = IO(new Bundle {
     val inData = Flipped(Decoupled(Pixel(Vec(inputC, Bool()))))
-    val outData = Decoupled(Pixel(Vec(outputChannel, Bool())))
+    val outData = Decoupled(Pixel(Vec(outputChannel, UInt())))
     val isInit = Output(Bool())
   })
 

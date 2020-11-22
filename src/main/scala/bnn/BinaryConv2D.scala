@@ -9,7 +9,7 @@ class BinaryConv2D(
   weights: Seq[Seq[Boolean]],
   bias: Seq[Int],
   inputShape: (Int, Int, Int),
-  cyclesForAllWeights: Int,
+  countsForAllWeights: Int,
   stride: Int
 ) extends Binary2DLayer(
   kernelSize,
@@ -17,13 +17,27 @@ class BinaryConv2D(
   weights.length,
   stride
 ) {
-  val weightsPerCycle = math.ceil(weights.length.toFloat / cyclesForAllWeights.toFloat).toInt
-  val cyclesForWeights = math.ceil(weights.length.toFloat / weightsPerCycle.toFloat).toInt
+  val weightsPerApply = math.ceil(weights.length.toFloat / countsForAllWeights.toFloat).toInt
+  val countsForApplyingAllWeights = math.ceil(weights.length.toFloat / weightsPerApply.toFloat).toInt
+  val weightsss = weights.sliding(weightsPerApply, weightsPerApply).toSeq
+  val biasess = bias.sliding(weightsPerApply, weightsPerApply).toSeq
+  val weightsssVec = VecInit(
+    weightsss.map(weightss => VecInit(
+      weightss.map(weights => VecInit(
+        weights.map(weight => weight.asBool())
+      ))
+    ))
+  )
+  val biasessVec = VecInit(
+    biasess.map(biases => VecInit(
+      biases.map(_.asUInt())
+    ))
+  )
 
   require(weights.length == bias.length)
 
-  val weightIdx = RegInit(0.U(requiredLength(cyclesForAllWeights).W))
-  val activatedBuffer = Reg(Vec(cyclesForWeights, Vec(weightsPerCycle, Bool())))
+  val weightIdx = RegInit(0.U(requiredLength(countsForAllWeights).W))
+  val activatedBuffer = Reg(Vec(countsForApplyingAllWeights, Vec(weightsPerApply, Bool())))
 
   val exec_conv :: post_process :: Nil = Enum(2)
   val runningState = RegInit(exec_conv)
@@ -38,22 +52,41 @@ class BinaryConv2D(
   compile()
 
   override protected def executionState(): Unit = {
-    switch(runningState) {
-      is(exec_conv) {
-        convolution()
+    val bitLength = inputC * kernelH * kernelW
+    val countLength = requiredLength(bitLength)
+    val bitCounters = Seq.fill(weightsPerApply)(Module(new BitCounter(bitLength)))
+    bitCounters.foreach(counter => counter.io.in := VecInit(Seq.fill(counter.width)(false.B)))
+
+    val weightss = weightsssVec(weightIdx)
+
+    val counts = (weightss zip bitCounters).map { case (weights, counter) =>
+      val bits = (weights zip window.io.window.bits).flatMap {
+        case (weight, pixel) => pixel.bits.map(_ ^ weight)
       }
-      is(post_process) {
-        postProcess()
+
+      counter.io.in := VecInit(bits)
+      counter.io.count
+    }
+
+    val pixel = Wire(Pixel(Vec(weightsPerApply, UInt(countLength.W))))
+    pixel.left        := window.io.isLeft
+    pixel.right       := window.io.isRight
+    pixel.topLeft     := window.io.isTopLeft
+    pixel.bottomRight := window.io.isBottomRight
+    pixel.valid       := true.B
+    pixel.bits        := VecInit(counts)
+
+    io.outData.valid := true.B
+    io.outData.bits  := pixel
+
+    when(io.outData.ready) {
+      val nextIdx = weightIdx + 1.U
+      weightIdx := Mux(nextIdx === countsForApplyingAllWeights.U, 0.U, nextIdx)
+      when(nextIdx === countsForApplyingAllWeights.U) {
+
       }
     }
-  }
 
-  private def convolution(): Unit = {
-    val weightsss = weights.sliding(weightsPerCycle, weightsPerCycle).toSeq
-    val biasess = bias.sliding(weightsPerCycle, weightsPerCycle).toSeq
-
-    val bitCounters = Seq.fill(weightsPerCycle)(Module(new BitCounter(inputC * kernelH * kernelW)))
-    bitCounters.foreach(counter => counter.io.in := VecInit(Seq.fill(counter.width)(false.B)))
 
     when(window.io.window.valid) {
       (weightsss zip biasess).zipWithIndex.foreach {
@@ -78,8 +111,8 @@ class BinaryConv2D(
       }
 
       val nextIdx = weightIdx + 1.U
-      weightIdx := Mux(nextIdx === cyclesForWeights.U, 0.U, nextIdx)
-      when(nextIdx === cyclesForWeights.U) {
+      weightIdx := Mux(nextIdx === countsForApplyingAllWeights.U, 0.U, nextIdx)
+      when(nextIdx === countsForApplyingAllWeights.U) {
         runningState := post_process
         sendBitsDone := false.B
         sendNextPixelDone := false.B
@@ -92,52 +125,6 @@ class BinaryConv2D(
       shiftPolicy := Mux(reachBottomRight, force_shift, shiftPolicy)
       window.io.nextPixel.valid := true.B
       inputBufferIdx := 0.U
-    }
-  }
-
-  private def postProcess(): Unit = {
-    val bits = VecInit(activatedBuffer.flatten)
-    val pixel = Wire(Pixel(Vec(bits.length, Bool())))
-    pixel.bits := bits
-    pixel.valid := true.B
-    pixel.left := isBufferLeft
-    pixel.right := isBufferRight
-    pixel.topLeft := isBufferTopLeft
-    pixel.bottomRight := isBufferBottomRight
-
-    when(io.outData.ready & !sendBitsDone) {
-      io.outData.bits := pixel
-      io.outData.valid := true.B
-      sendBitsDone := true.B
-    }
-
-    val readyForNextPixel = ((nextInputBufferIdx === stride.U) & io.inData.valid) | isInputBufferFull
-    when(shiftPolicy === wait_to_ready & readyForNextPixel & !sendNextPixelDone) {
-      window.io.nextPixel.valid := true.B
-      inputBufferIdx := 0.U
-      sendNextPixelDone := true.B
-
-      val reachBottomRight = nextPixelBits.foldLeft(false.B) { case (acc, pixel) => acc | pixel.bottomRight }
-      shiftPolicy := Mux(reachBottomRight, force_shift, shiftPolicy)
-    }
-
-    when(shiftPolicy === force_shift & !sendNextPixelDone) {
-      window.io.forceShift := true.B
-      sendNextPixelDone := true.B
-
-      val topLeftInBuffer = inputBuffers.foldLeft(false.B) { case (acc, pixel) => acc | pixel.topLeft }
-      val transit = (inputBufferIdx =/= 0.U) | topLeftInBuffer
-      when(transit) {
-        shiftPolicy := wait_to_ready
-      }
-    }
-
-    when(sendBitsDone & sendNextPixelDone) {
-      runningState := exec_conv
-
-      when(pixel.bottomRight) {
-        globalState := wait_executable
-      }
     }
   }
 }
