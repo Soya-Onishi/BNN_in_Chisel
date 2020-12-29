@@ -11,12 +11,12 @@ class WindowBuffer[T <: Data](gen: T, inputSize: (Int, Int), kernelSize: (Int, I
   val memDepth = xMaxApplyCount - 1
 
   val io = IO(new Bundle {
-    val window = ValidIO(Vec(kernelH * kernelW, Pixel[T](gen)))
+    val window = ValidIO(Vec(kernelH * kernelW, Pixel(gen)))
     val isLeft = Output(Bool())
     val isRight = Output(Bool())
     val isTopLeft = Output(Bool())
     val isBottomRight = Output(Bool())
-    val nextPixel = Flipped(ValidIO(Vec(stride, Pixel[T](gen))))
+    val nextPixel = Flipped(ValidIO(Vec(stride, Pixel(gen))))
 
     val forceShift = Input(Bool())
     val isInit = Output(Bool())
@@ -25,7 +25,7 @@ class WindowBuffer[T <: Data](gen: T, inputSize: (Int, Int), kernelSize: (Int, I
   val init :: fill_pixel :: output_window :: vertical_stride :: Nil = Enum(4)
   val globalState = RegInit(init)
 
-  val initPixel = WireInit(Pixel[T](gen), DontCare)
+  val initPixel = WireInit(Pixel(gen), DontCare)
   initPixel.valid       := false.B
   initPixel.topLeft     := false.B
   initPixel.bottomRight := false.B
