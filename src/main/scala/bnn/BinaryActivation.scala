@@ -2,7 +2,9 @@ package bnn
 
 import chisel3._
 import chisel3.util._
+import chisel3.experimental._
 
+@chiselName
 class BinaryActivation2(
   val size: Int,
   val inputWidth: Int,
@@ -16,7 +18,7 @@ class BinaryActivation2(
   val biasWidth = unsignedBitLength(biases.max)
 
   val (biasCounter, biasIdx) = DeluxeCounter(biasIdxMax)
-  val biasess = VecInit(biases.map(_.U(biasWidth.W)).sliding(size, size).map(v => VecInit(v)).toSeq)
+  val biasess = WireInit(VecInit(biases.map(_.U(biasWidth.W)).sliding(size, size).map(v => VecInit(v)).toSeq))
   val activateds = (io.inData.bits zip biasess(biasIdx.current)).map{ case (v, bias) => v > bias }
 
   when(io.inData.valid && io.outData.ready) {
