@@ -21,11 +21,12 @@ object BNNMain extends App {
 
   val simplifyMem = firrtl.stage.RunFirrtlTransformAnnotation(new firrtl.transforms.SimplifyMems)
   val generator = ChiselGeneratorAnnotation(() =>
-    new BinaryConv2DBool(
+    new BinaryConv2DBinary(
       kernelSize = (3, 3),
-      weights = weightss,
+      weightss = weightss,
+      inputSize = inputC,
       inputShape = inputShape,
-      countsForAllWeights = cycles,
+      cyclesForAllWeights = cycles,
       stride = stride,
     )
   )
@@ -48,7 +49,8 @@ object MaxPoolingGen extends App {
   val annon = ChiselGeneratorAnnotation(() =>
     new BinaryMaxPooling2D(
       kernelSize = (3, 3),
-      inputSize = inputShape,
+      inputSize = inputC,
+      inputShape = inputShape,
       stride = stride
     )
   )

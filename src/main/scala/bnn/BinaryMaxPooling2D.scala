@@ -5,22 +5,47 @@ import chisel3.util._
 
 class BinaryMaxPooling2D(
   kernelSize: (Int, Int),
-  inputSize: (Int, Int, Int),
+  inputSize: Int,
+  inputShape: (Int, Int, Int),
   stride: Int
-) extends Binary2DLayer[Bool, Bool](
-  kernelSize,
-  inputSize,
-  inputSize._3,
-  stride,
-  Bool(),
-  Bool()
-) {
+) extends BinaryLayer {
+  val (_, _, inputC) = inputShape
+
+  val io = IO(new Bundle {
+    val inData = Flipped(DecoupledIO(Pixel(Vec(inputSize, Bool()))))
+    val outData = DecoupledIO(Pixel(Vec(inputC, Bool())))
+    val isInit = Output(Bool())
+  })
+
   val exec_pooling :: post_process :: Nil = Enum(2)
+  val layerBase = Module(new Binary2DLayer(kernelSize, inputSize, inputShape, stride, Bool()))
 
-  val readyForNextPixel = ((nextInputBufferIdx === stride.U) & io.inData.valid) | isInputBufferFull
+  layerBase.io.inData <> io.inData
+  layerBase.io.outData.ready := false.B
+  io.outData.valid := false.B
+  io.outData.bits  := DontCare
+  io.isInit        := layerBase.io.isInit
 
-  compile()
+  when(layerBase.io.outData.valid) {
+    val pooling = VecInit(layerBase.io.outData.bits.map(_.bits)).reduceTree{
+      case (left, right) => VecInit((left zip right).map{ case (l, r) => l | r })
+    }
 
+    val pixel = Wire(Pixel(Vec(inputC, Bool())))
+    pixel.bits        := pooling
+    pixel.left        := layerBase.io.isLeft
+    pixel.right       := layerBase.io.isRight
+    pixel.topLeft     := layerBase.io.isTopLeft
+    pixel.bottomRight := layerBase.io.isBottomRight
+    pixel.valid       := true.B
+
+    io.outData.bits  := pixel
+    io.outData.valid := true.B
+
+    layerBase.io.outData.ready := true.B
+  }
+
+  /*
   protected override def executionState(): Unit = {
     val bits = window.io.window.bits.foldLeft(0.U(inputC.W)){ case (acc, pixel) => acc | pixel.bits.asUInt() }
     val applied = VecInit(bits.asBools())
@@ -36,7 +61,7 @@ class BinaryMaxPooling2D(
     isBottomRight               := window.io.isBottomRight
 
     when(window.io.window.valid) {
-      globalState := wait_to_next
+      globalState := wait_next
     }
 
     when(!window.io.window.valid & readyForNextPixel) {
@@ -46,6 +71,7 @@ class BinaryMaxPooling2D(
       inputBufferIdx := 0.U
     }
   }
+  */
 
 //  private def postProcess(): Unit = {
 //    when(io.outData.ready) {
