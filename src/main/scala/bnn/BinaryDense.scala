@@ -2,129 +2,104 @@ package bnn
 
 import chisel3._
 import chisel3.util._
-import chisel3.util.experimental.loadMemoryFromFile
-
-import java.nio.file.Files
 
 class BinaryDense(
-  inputSize: Int,
-  inputNeuron: Int,
-  cyclesForAllWeights: Int,
-  weightss: Seq[Seq[Boolean]],
-  biases: Seq[Int]
+                   inputSize: Int,
+                   inputNeuron: Int,
+                   _cyclesForAllWeights: Int,
+                   weightss: Seq[Seq[Boolean]]
 ) extends BinaryLayer {
-  assert(weightss.length == biases.length)
   assert(weightss.map(_.length).forall(_ == inputNeuron))
 
   val inputCount = math.ceil(inputNeuron.toFloat / inputSize.toFloat).toInt
-  val weightsPerCycle = math.ceil(weightss.length.toFloat / cyclesForAllWeights.toFloat).toInt
+  val inputIdxMax = inputCount - 1
+  val outputWidth = unsignedBitLength(weightss.head.length)
+  val weightsPerCycle = math.ceil(weightss.length.toFloat / _cyclesForAllWeights.toFloat).toInt
   val cyclesForApplyingAllWeights = math.ceil(weightss.length.toFloat / weightsPerCycle.toFloat).toInt
-  val outputSize = weightsPerCycle
+  val weightIdxMax = cyclesForApplyingAllWeights - 1
+  val outputSize = weightss.length
+  val outputPacketSize = weightsPerCycle
+  val memDepth =  math.ceil(outputSize.toFloat / weightsPerCycle.toFloat).toInt // == cyclesForApplyingAllWeights
 
   val io = IO(new Bundle {
     val inData = Flipped(DecoupledIO(Vec(inputSize, Bool())))
-    val outData = DecoupledIO(Vec(outputSize, Bool()))
+    val outData = DecoupledIO(Vec(outputPacketSize, UInt(outputWidth.W)))
     val isInit = Output(Bool())
   })
 
-  val memDepth = math.ceil(weightss.length.toFloat / weightsPerCycle.toFloat).toInt
-  val weightBufferDepth = inputCount * cyclesForApplyingAllWeights
   val bitCounters = Seq.fill(weightsPerCycle)(Module(new BitCounter(inputSize)))
-  val countBuffers = Seq.fill(weightsPerCycle)(SyncReadMemOnePort(memDepth, UInt(requiredLength(inputNeuron).W)))
+  val countBuffers = Seq.fill(weightsPerCycle)(SyncReadMemOnePort(memDepth, UInt(outputWidth.W)))
 
-  val init :: dense :: activation :: Nil = Enum(3)
+  val init :: dense :: Nil = Enum(2)
   val globalState = RegInit(init)
-
-
-  private def transformToContinuousForm(weightsss: Seq[Seq[Seq[Boolean]]]): Seq[String] = {
-    def sortVertically(stringss: Seq[Seq[String]]): Seq[String] = {
-      if(stringss.exists(_.isEmpty)) Seq.empty
-      else stringss.map(_.head) ++ sortVertically(stringss.map(_.tail))
-    }
-
-    val stringss = weightsss.map(_.map(_.map(w => if(w) '1' else '0').mkString))
-    sortVertically(stringss)
-  }
 
   val inputBuffer = Reg(Valid(Vec(inputSize, Bool())))
   val inputReady = !inputBuffer.valid & globalState === dense
-  val inputIdx = RegInit(0.U(requiredLength(inputCount).W))
-  val countBufIdx = RegInit(0.U(requiredLength(cyclesForApplyingAllWeights).W))
-  val weightIdx = RegInit(0.U(requiredLength(weightBufferDepth).W))
 
-  val weightssss = weightss.map(_.sliding(inputSize, inputSize).toSeq).sliding(weightsPerCycle, weightsPerCycle).toSeq
-  val weightssssString = weightssss.map(transformToContinuousForm)
-  val paths = weightssssString.map { weights =>
-    val path = denseWeightName()
-    Files.writeString(path, weights.mkString("\n"))
-    path
-  }
-  val weightBuffers = paths.map(path => SyncReadMemOnePort(weightBufferDepth, Vec(inputSize, Bool()), path))
+  val (inputCounter, inputIdx) = DeluxeCounter(inputIdxMax)
+  val (weightIdxCounter, weightIdx) = DeluxeCounter(weightIdxMax)
+  val (memIdxCounter, memIdx) = DeluxeCounter(memDepth - 1)
 
-  val weightIdxIncTmp = weightIdx + 1.U
-  val weightIdxInc = Mux(weightIdxIncTmp === weightBufferDepth.U, 0.U, weightIdxIncTmp)
-  val countBufferReadIdx = Mux(inputBuffer.valid, weightIdx + 1.U, weightIdx)
-  val counts = countBuffers.map(buf => buf.read(countBufferReadIdx))
-  val allCounts = Seq.fill(weightsPerCycle)(WireInit(0.U(requiredLength(inputNeuron).W)))
-  val countBufIdxIncTmp = countBufIdx + 1.U
-  val countBufIdxInc = Mux(countBufIdxIncTmp === cyclesForApplyingAllWeights.U, 0.U, countBufIdxIncTmp)
-
-  val biasess = biases.sliding(weightsPerCycle, weightsPerCycle).toSeq
-  val biasessVec = VecInit(biasess.map(biases => VecInit(biases.map(_.asUInt()))))
-
-  io.outData.valid := globalState === activation
+  io.outData.valid := false.B
   io.outData.bits  := DontCare
   io.inData.ready  := inputReady
   io.isInit        := globalState === init
   bitCounters.foreach(c => c.io.in := DontCare)
 
   when(io.inData.valid & inputReady) {
-    countBuffers.foreach(buf => buf.read(0.U))
-    weightBuffers.foreach(buf => buf.read(0.U))
     inputBuffer.valid := true.B
+    countBuffers.map(_.read(0.U))
     inputBuffer.bits := io.inData.bits
   }
 
-  when(inputBuffer.valid & globalState === dense) {
-    val weightss = VecInit(weightBuffers.map(_.io.rdata))
-    (weightss, countBuffers, bitCounters).zipped.foreach {
-      case (weights, buf, counter) =>
-        val applied = inputBuffer.bits.asUInt() ^ weights.asUInt()
-        counter.io.in := VecInit(applied.asBools())
-        val acc = counter.io.count + buf.io.rdata
-        buf.write(countBufIdx, acc)
-    }
-
-    weightBuffers.foreach(buf => buf.read(weightIdxInc))
-    countBuffers.foreach(buf => buf.read(countBufIdxInc))
-    weightIdx := weightIdxInc
-    countBufIdx := countBufIdxInc
-
-    when(countBufIdxIncTmp === cyclesForApplyingAllWeights.U) {
-      inputBuffer.valid := false.B
-
-      val inputIdxIncTmp = inputIdx + 1.U
-      val inputIdxInc = Mux(inputIdxIncTmp === inputCount.U, 0.U, inputIdxIncTmp)
-      inputIdx := inputIdxInc
-      when(inputIdxIncTmp === inputCount.U) {
-        globalState := activation
-      }
+  when(globalState === init) {
+    countBuffers.foreach(buf => buf.write(memIdx.current, 0.U))
+    memIdxCounter.count()
+    when(memIdx.wrapped) {
+      globalState := dense
     }
   }
 
-  when(globalState === activation) {
-    val sums = countBuffers.map(_.io.rdata)
-    val readIdx = Mux(io.outData.ready, weightIdxInc, weightIdx)
-    countBuffers.foreach(_.read(readIdx))
-    val activateds = (sums zip biasessVec(weightIdx)).map{ case (sum, bias) => sum > bias }
-    io.outData.bits := VecInit(activateds)
+  val weightssss = weightss
+    .map(_.sliding(inputSize, inputSize).toSeq)
+    .sliding(weightsPerCycle, weightsPerCycle)
+    .toSeq
+    .map(_.transpose)
+  when(inputBuffer.valid & globalState === dense) {
+    val defaultBools = VecInit(Seq.fill(weightsPerCycle)(VecInit(Seq.fill(inputSize)(false.B))))
+    val weightss = MuxLookup[UInt, Vec[Vec[Bool]]](weightIdx.current, defaultBools, weightssss.zipWithIndex.map {
+      case (weightsss, idx) =>
+        val elems = weightsss.zipWithIndex.map {
+          case (weightss, idx) => idx.U(unsignedBitLength(inputIdxMax).W) -> VecInit(weightss.map(weights => VecInit(weights.map(_.B))))
+        }
 
-    when(io.outData.ready) {
-      weightIdx := weightIdxInc
+        idx.U(unsignedBitLength(weightIdxMax).W) -> MuxLookup[UInt, Vec[Vec[Bool]]](inputIdx.current, defaultBools, elems)
+    })
 
-      when(weightIdxIncTmp === cyclesForApplyingAllWeights.U) {
-        globalState := dense
-      }
+    val counts = (weightss, countBuffers, bitCounters).zipped.map {
+      case (weights, buf, counter) =>
+        val applied = inputBuffer.bits.asUInt() ^ weights.asUInt()
+        counter.io.in := VecInit(applied.asBools())
+        counter.io.count + buf.io.rdata
+    }
+
+    val storedCounts = counts.map{ c => Mux(memIdx.wrapped, 0.U, c) }
+
+    io.outData.valid := inputIdx.wrapped
+    io.outData.bits := VecInit(counts)
+
+    val transitNext = WireInit((inputIdx.wrapped & io.outData.ready) | !inputIdx.wrapped)
+    val nextLoadIdx = Mux(transitNext, memIdx.next, memIdx.current)
+    countBuffers.foreach(buf => buf.read(nextLoadIdx))
+    when(transitNext) {
+      (countBuffers zip storedCounts).foreach { case (buf, count) => buf.write(memIdx.current, count) }
+      memIdxCounter.count()
+      weightIdxCounter.count()
+    }
+
+    when(memIdx.wrapped & io.outData.ready) {
+      inputBuffer.valid := false.B
+      inputCounter.count()
     }
   }
 }
