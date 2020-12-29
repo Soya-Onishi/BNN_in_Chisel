@@ -28,6 +28,7 @@ class BinaryDenseActivationTester(
   weightss: Seq[Seq[Boolean]],
   biases: Seq[Int],
   idleCount: Int,
+  inputMax: Int,
   rnd: Random
 ) extends PeekPokeTester(module) {
   val inputNeuron = module.dense.inputNeuron
@@ -49,6 +50,7 @@ class BinaryDenseActivationTester(
   poke(module.io.outData.ready, true)
   poke(module.io.inData.valid, false)
 
+  var inputCount = 0
   var inIdx = 0
   var outIdx = 0
   var executing = true
@@ -57,10 +59,19 @@ class BinaryDenseActivationTester(
 
   while(executing && idleCycle < idleCount) {
     poke(module.io.inData.valid, (inIdx < inputss.length).toInt)
-    poke(module.io.inData.bits, inputss.lift(inIdx).getOrElse(inDefault))
+    poke(module.io.inData.bits, inputss.lift(inIdx).map(_.reverse).getOrElse(inDefault))
     if(inIdx < inputss.length & peek(module.io.inData.ready) == 1) {
       inIdx += 1
       idleCycle = 0
+
+      if(inIdx == inputss.length) {
+        inputCount += 1
+        logger.info(s"${inputCount}th input done")
+
+        if(inputCount < inputMax) {
+          inIdx = 0
+        }
+      }
     }
 
     if(outIdx < expectss.length & peek(module.io.outData.valid) == 1) {
@@ -75,12 +86,16 @@ class BinaryDenseActivationTester(
       outIdx += 1
       idleCycle = 0
       if(outIdx == expectss.length) {
-        executing = false
+        outIdx = 0
+
+        if(inputCount >= inputMax) {
+          executing = false
+        }
       }
     }
 
-    val inIdle = inIdx < inputss.length & peek(module.io.inData.ready) == 0
-    val outIdle = outIdx < expectss.length & peek(module.io.outData.valid) == 0
+    val inIdle = (inIdx < inputss.length && peek(module.io.inData.ready) == 0) | inIdx >= inputss.length
+    val outIdle = (outIdx < expectss.length && peek(module.io.outData.valid) == 0) | outIdx >= expectss.length
     if(inIdle && outIdle) {
       idleCycle += 1
     }
@@ -117,6 +132,35 @@ class BinaryDenseAndActivationFlatSpec extends ChiselFlatSpec {
         weightss,
         biases,
         idleCount = 200,
+        inputMax = 1,
+        rnd
+      )
+    } should be (true)
+  }
+
+  "combination of dense and activation layers for multi times" should "works correctly" in {
+    val rnd = new Random(0)
+    val inputNeuron = 128
+    val inputSize = 8
+    val cyclesForAllWeights = 4
+    val weightNumber = 12
+    val activationSize = math.ceil(weightNumber.toFloat / cyclesForAllWeights.toFloat).toInt
+    val weightss = Vector.fill(weightNumber)(Vector.fill(inputNeuron)(rnd.nextBoolean()))
+    val biases = Vector.fill(weightNumber)(rnd.nextInt(inputNeuron))
+
+    val backend = "treadle"
+    val args = Array("--backend-name", backend, "--generate-vcd-output", "on", "--no-dce")
+
+    lazy val dense = new BinaryDense(inputSize, inputNeuron, cyclesForAllWeights, weightss)
+    lazy val activation = new BinaryActivationDense(activationSize, unsignedBitLength(inputNeuron), biases)
+    lazy val top = new DenseAndActivation(dense, activation, inputSize)
+    iotesters.Driver.execute(args, () => top) {
+      c => new BinaryDenseActivationTester(
+        c,
+        weightss,
+        biases,
+        idleCount = 200,
+        inputMax = 3,
         rnd
       )
     } should be (true)

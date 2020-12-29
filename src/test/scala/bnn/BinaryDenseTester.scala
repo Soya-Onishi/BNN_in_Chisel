@@ -7,7 +7,6 @@ class BinaryDenseTester(
   dense: BinaryDense,
   inputSize: Int,
   inputNeuron: Int,
-  weightSize: Int,
   weightss: Seq[Seq[Boolean]],
   cycles: Int,
   idleCycle: Int,
@@ -123,7 +122,27 @@ class BinaryDenseSpec extends ChiselFlatSpec {
 
     lazy val dense = new BinaryDense(inputSize, inputNeuron, cycles, weightss)
     chisel3.iotesters.Driver.execute(args, () => dense) {
-      c => new BinaryDenseTester(c, inputSize, inputNeuron, weightSize, weightss, cycles, idleCycle, 1, rnd)
+      c => new BinaryDenseTester(c, inputSize, inputNeuron, weightss, cycles, idleCycle, 1, rnd)
+    } should be (true)
+  }
+
+  "execute binary dense layer multiple times" should "works correctly" in {
+    val rnd = new Random(0)
+
+    val inputSize = 8
+    val inputNeuron = 128
+    val weightSize = 12
+    val cycles = 4
+    val idleCycle = 200
+
+    val weightss = Seq.fill(weightSize)(Seq.fill(inputNeuron)(rnd.nextBoolean()))
+
+    val backend = "treadle"
+    val args = Array("--backend-name", backend, "--generate-vcd-output", "on")
+
+    lazy val dense = new BinaryDense(inputSize, inputNeuron, cycles, weightss)
+    chisel3.iotesters.Driver.execute(args, () => dense) {
+      c => new BinaryDenseTester(c, inputSize, inputNeuron, weightss, cycles, idleCycle, 2, rnd)
     } should be (true)
   }
 }

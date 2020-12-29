@@ -1,29 +1,39 @@
 package bnn
 
 import chisel3._
+import chisel3.util._
 
 class BinaryActivationDense(
-  val channels: Int,
-  val inputSize: Int,
+  val size: Int,
   val inputWidth: Int,
-  val biases: Seq[Int],
-) extends BinaryActivation[Vec[UInt], Vec[Bool]] (
-  channels,
-  inputSize,
-  inputWidth,
-  biases,
-  Vec(inputSize, UInt(inputWidth.W)),
-  Vec(channels, Bool())
-) {
-  io.inData.ready := globalState =/= sending
-  io.outData.valid := false.B
-  io.outData.bits := VecInit(outputBuffer.flatten.take(channels))
+  val biases: Seq[Int]
+) extends BinaryLayer {
+  val io = IO(new Bundle {
+    val inData = Flipped(DecoupledIO(Vec(size, UInt(inputWidth.W))))
+    val outData = DecoupledIO(Vec(size, Bool()))
+  })
 
-  elaborate()
+  val inValid = RegInit(false.B)
+  val inBits = Reg(Vec(size, UInt(inputWidth.W)))
 
-  override protected def renewBuffer(): Unit = {
-    when(io.inData.valid & globalState =/= sending) {
-      inputBuffer.bits := io.inData.bits
-    }
+  val outValid = RegInit(false.B)
+  val outBits = Reg(Vec(size, Bool()))
+
+  val activation = Module(new BinaryActivation2(size, inputWidth, biases))
+
+  io.inData.ready := io.outData.ready
+  when(io.outData.ready) {
+    inValid := io.inData.valid
+    inBits := io.inData.bits
+
+    outValid := activation.io.outData.valid
+    outBits := activation.io.outData.bits
   }
+
+  activation.io.inData.valid := inValid
+  activation.io.inData.bits := inBits
+
+  activation.io.outData.ready := io.outData.ready
+  io.outData.bits  := outBits
+  io.outData.valid := outValid
 }
