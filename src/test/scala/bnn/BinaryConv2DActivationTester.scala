@@ -35,6 +35,8 @@ class BinaryConv2DActivationTester(
   inputShape: (Int, Int, Int),
   stride: Int,
   idleCycle: Int,
+  activationSize: Int,
+  outIdxMax: Int,
   applyCount: Int,
   rnd: Random
 ) extends PeekPokeTester(module) {
@@ -52,6 +54,7 @@ class BinaryConv2DActivationTester(
     var inY = 0
     var outX = 0
     var outY = 0
+    var outIdx = 0
     var sendingPixels = true
     var executingConv = true
     var idleCount = 0
@@ -82,26 +85,33 @@ class BinaryConv2DActivationTester(
         }
 
         val applied = weightss.map { weights => (weights zip cropped).map { case (w, p) => p.map(_ ^ w) } }
-        val expected = applied.map(convolution).zip(biases).map { case (value, bias) => value > bias }
+        val expected = applied.map(convolution).zip(biases)
+          .map { case (value, bias) => value > bias }
+          .sliding(activationSize, activationSize)
+          .toVector(outIdx)
 
-        expect(module.io.outData.bits.left, outX == 0, s"conv for [$imageX, $imageY]")
-        expect(module.io.outData.bits.right, outX == outW - 1, s"conv for [$imageX, $imageY]")
-        expect(module.io.outData.bits.topLeft, outX == 0 && outY == 0, s"conv for [$imageX, $imageY]")
-        expect(module.io.outData.bits.bottomRight, outX == outW - 1 && outY == outH - 1, s"conv for [$imageX, $imageY]")
+        expect(module.io.outData.bits.left, outX == 0, s"conv for [$imageX, $imageY, $outIdx]")
+        expect(module.io.outData.bits.right, outX == outW - 1, s"conv for [$imageX, $imageY, $outIdx]")
+        expect(module.io.outData.bits.topLeft, outX == 0 && outY == 0, s"conv for [$imageX, $imageY, $outIdx]")
+        expect(module.io.outData.bits.bottomRight, outX == outW - 1 && outY == outH - 1, s"conv for [$imageX, $imageY, $outIdx]")
         (module.io.outData.bits.bits zip expected).foreach {
-          case (b, e) => expect(b, BigInt(e.toInt), s"conv for [$imageX, $imageY]")
+          case (b, e) => expect(b, BigInt(e.toInt), s"conv for [$imageX, $imageY, $outIdx]")
         }
 
-        val nextX = outX + 1
-        val nextY = outY + 1
+        outIdx = outIdx + 1
+        if(outIdx == outIdxMax + 1) {
+          outIdx = 0
+          val nextX = outX + 1
+          val nextY = outY + 1
 
-        outX = nextX % outW
-        if (nextX == outW) {
-          outY = nextY % outH
-        }
+          outX = nextX % outW
+          if (nextX == outW) {
+            outY = nextY % outH
+          }
 
-        if (nextX == outW && nextY == outH) {
-          executingConv = false
+          if (nextX == outW && nextY == outH) {
+            executingConv = false
+          }
         }
       }
 
@@ -148,17 +158,18 @@ class BinaryConv2DActivationFlatSpec extends ChiselFlatSpec {
     val countsForAllWeights = 3
     val idleCycle = 1000
     val stride = 1
-    val activeInputSize = math.ceil(filterNum.toFloat / countsForAllWeights.toFloat).toInt
+    val activationSize = math.ceil(filterNum.toFloat / countsForAllWeights.toFloat).toInt
+    val outIdxMax = math.ceil(filterNum.toFloat / activationSize.toFloat).toInt - 1
 
     val weightss = Seq.fill(filterNum)(Seq.fill(kernelH * kernelW)(rnd.nextBoolean()))
     val biases = Seq.fill(filterNum)(rnd.nextInt(kernelH * kernelW * inputC))
 
     val backend = "treadle"
-    val args = Array("--backend-name", backend, "--generate-vcd-output", "on")
+    val args = Array("--backend-name", backend, "--generate-vcd-output", "on", "--no-dce")
 
     lazy val conv = new BinaryConv2DBool(kernelSize, weightss, inputShape, countsForAllWeights, stride)
-    lazy val activation = new BinaryActivationConv2D(filterNum, activeInputSize, requiredLength(kernelH * kernelW * inputC), biases)
-    lazy val top = new Conv2DAndActivation(conv, activation, inputC, filterNum)
+    lazy val activation = new BinaryActivationConv2D(activationSize, unsignedBitLength(kernelH * kernelW * inputC), biases)
+    lazy val top = new Conv2DAndActivation(conv, activation, inputC, activationSize)
     iotesters.Driver.execute(args, () => top) {
       c => new BinaryConv2DActivationTester(
         c,
@@ -168,6 +179,8 @@ class BinaryConv2DActivationFlatSpec extends ChiselFlatSpec {
         inputShape,
         stride,
         idleCycle,
+        activationSize,
+        outIdxMax,
         1,
         rnd
       )

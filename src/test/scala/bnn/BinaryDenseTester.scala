@@ -9,7 +9,6 @@ class BinaryDenseTester(
   inputNeuron: Int,
   weightSize: Int,
   weightss: Seq[Seq[Boolean]],
-  biases: Seq[Int],
   cycles: Int,
   idleCycle: Int,
   countOfInputs: Int,
@@ -17,13 +16,12 @@ class BinaryDenseTester(
 ) extends PeekPokeTester(dense) {
   logger.info("init parameters")
 
-  val inputs = Seq.fill(inputNeuron)(rnd.nextBoolean())
-  val inputss = inputs.sliding(inputSize, inputSize).toSeq
+  val inputs = Vector.fill(inputNeuron)(rnd.nextBoolean())
+  val inputss = inputs.sliding(inputSize, inputSize).toVector
   val outputSize = math.ceil(weightss.length / cycles.toFloat).toInt
-  val results = (weightss zip biases).map{ case (weights, bias) =>
+  val results = weightss.map{ weights =>
     val mult = (weights zip inputs).map{ case (w, i) => w ^ i }
-    val count = mult.count(identity)
-    count > bias
+    mult.count(identity)
   }
   val resultss = results.sliding(outputSize, outputSize).toSeq
 
@@ -41,11 +39,35 @@ class BinaryDenseTester(
   for(_ <- 0 until countOfInputs) {
     var inputPos = 0
     var outputPos = 0
+    var executingFeed = true
     var executingDense = true
     var moreInputs = true
     var idleCount = 0
 
     logger.info("start sending data into dense layer")
+
+    // feed inputss.init to dense layer
+    while(executingFeed && idleCount < idleCycle) {
+      poke(dense.io.inData.valid, 1)
+      poke(dense.io.inData.bits, inputss(inputPos).map(b => BigInt(b.toInt)))
+
+      if(peek(dense.io.inData.ready) == 1) {
+        val inputPosNext = inputPos + 1
+        idleCount = 0
+
+        if(inputPos == inputss.length - 2) {
+          executingFeed = false
+        }
+
+        inputPos = inputPosNext
+      }
+
+      if(peek(dense.io.inData.ready) == 0) {
+        idleCount += 1
+      }
+
+      step(1)
+    }
 
     while(executingDense && idleCount < idleCycle) {
       if(peek(dense.io.outData.valid) == 1) {
@@ -79,6 +101,12 @@ class BinaryDenseTester(
 
       step(1)
     }
+
+    if(idleCount >= idleCycle) {
+      logger.error("idle count reach max")
+      finish
+      fail
+    }
   }
 }
 
@@ -86,21 +114,20 @@ class BinaryDenseSpec extends ChiselFlatSpec {
   "binary dense layer" should "works correctly" in {
     val rnd = new Random(0)
 
-    val inputSize = 128
-    val inputNeuron = 115200
-    val weightSize = 128
+    val inputSize = 8
+    val inputNeuron = 128
+    val weightSize = 12
     val cycles = 4
     val idleCycle = 200
 
     val weightss = Seq.fill(weightSize)(Seq.fill(inputNeuron)(rnd.nextBoolean()))
-    val biases = Seq.fill(weightSize)(rnd.nextInt(inputNeuron))
 
     val backend = "treadle"
     val args = Array("--backend-name", backend, "--generate-vcd-output", "on")
 
-    lazy val dense = new BinaryDense(inputSize, inputNeuron, cycles, weightss, biases)
+    lazy val dense = new BinaryDense(inputSize, inputNeuron, cycles, weightss)
     chisel3.iotesters.Driver.execute(args, () => dense) {
-      c => new BinaryDenseTester(c, inputSize, inputNeuron, weightSize, weightss, biases, cycles, idleCycle, 1, rnd)
+      c => new BinaryDenseTester(c, inputSize, inputNeuron, weightSize, weightss, cycles, idleCycle, 1, rnd)
     }
   }
 }
