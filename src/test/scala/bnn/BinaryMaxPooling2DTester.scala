@@ -114,7 +114,8 @@ class BinaryMaxPooling2DTester(
 class BinaryMP2DSpec extends ChiselFlatSpec {
   "binary max pooling for one cycle" should "works correctly" in {
     val kernelSize = (3, 3)
-    val inputSize = (23, 23, 32)
+    val inputC     = 32
+    val inputShape = (23, 23, inputC)
     val stride = 1
     val applyCount = 1
     val idleCycle = 200
@@ -122,15 +123,16 @@ class BinaryMP2DSpec extends ChiselFlatSpec {
     val backend = "treadle"
     val args = Array("--backend-name", backend, "--generate-vcd-output", "on")
 
-    lazy val mp = new BinaryMaxPooling2D(kernelSize, inputSize, stride)
+    lazy val mp = new BinaryMaxPooling2D(kernelSize, inputC, inputShape, stride)
     iotesters.Driver.execute(args, () => mp) {
-      c => new BinaryMaxPooling2DTester(c, kernelSize, inputSize, stride, applyCount, idleCycle)
+      c => new BinaryMaxPooling2DTester(c, kernelSize, inputShape, stride, applyCount, idleCycle)
     } should be (true)
   }
 
   "binary max pooling twice" should "works correctly" in {
     val kernelSize = (3, 3)
-    val inputSize = (23, 23, 32)
+    val inputC = 32
+    val inputShape = (23, 23, inputC)
     val stride = 1
     val applyCount = 2
     val idleCycle = 200
@@ -138,9 +140,9 @@ class BinaryMP2DSpec extends ChiselFlatSpec {
     val backend = "treadle"
     val args = Array("--backend-name", backend, "--generate-vcd-output", "on")
 
-    lazy val mp = new BinaryMaxPooling2D(kernelSize, inputSize, stride)
+    lazy val mp = new BinaryMaxPooling2D(kernelSize, inputC, inputShape, stride)
     iotesters.Driver.execute(args, () => mp) {
-      c => new BinaryMaxPooling2DTester(c, kernelSize, inputSize, stride, applyCount, idleCycle)
+      c => new BinaryMaxPooling2DTester(c, kernelSize, inputShape, stride, applyCount, idleCycle)
     } should be (true)
   }
 }

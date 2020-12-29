@@ -8,7 +8,7 @@ import chisel3.iotesters.{PeekPokeTester, ChiselFlatSpec}
 import scala.util.Random
 
 class Conv2DAndActivation(
-  _conv: => BinaryConv2DBool,
+  _conv: => BinaryConv2DBinary,
   _activation: => BinaryActivationConv2D,
   inputSize: Int,
   outputSize: Int
@@ -167,7 +167,7 @@ class BinaryConv2DActivationFlatSpec extends ChiselFlatSpec {
     val backend = "treadle"
     val args = Array("--backend-name", backend, "--generate-vcd-output", "on", "--no-dce")
 
-    lazy val conv = new BinaryConv2DBool(kernelSize, weightss, inputShape, countsForAllWeights, stride)
+    lazy val conv = new BinaryConv2DBinary(kernelSize, weightss, inputC, inputShape, countsForAllWeights, stride)
     lazy val activation = new BinaryActivationConv2D(activationSize, unsignedBitLength(kernelH * kernelW * inputC), biases)
     lazy val top = new Conv2DAndActivation(conv, activation, inputC, activationSize)
     iotesters.Driver.execute(args, () => top) {
