@@ -19,10 +19,7 @@ class BinaryDenseTester(
   val inputs = Vector.fill(inputNeuron)(rnd.nextBoolean())
   val inputss = inputs.sliding(inputSize, inputSize).toVector
   val outputSize = math.ceil(weightss.length / cycles.toFloat).toInt
-  val results = weightss.map{ weights =>
-    val mult = (weights zip inputs).map{ case (w, i) => w ^ i }
-    mult.count(identity)
-  }
+  val results = weightss.map{ weights =>  (weights zip inputs).map{ case (w, i) => w ^ i }.count(identity) }
   val resultss = results.sliding(outputSize, outputSize).toSeq
 
   logger.info("parameters have been initialized")
@@ -41,7 +38,6 @@ class BinaryDenseTester(
     var outputPos = 0
     var executingFeed = true
     var executingDense = true
-    var moreInputs = true
     var idleCount = 0
 
     logger.info("start sending data into dense layer")
@@ -49,17 +45,14 @@ class BinaryDenseTester(
     // feed inputss.init to dense layer
     while(executingFeed && idleCount < idleCycle) {
       poke(dense.io.inData.valid, 1)
-      poke(dense.io.inData.bits, inputss(inputPos).map(b => BigInt(b.toInt)))
-
+      poke(dense.io.inData.bits, inputss(inputPos).map(b => BigInt(b.toInt)).reverse)
       if(peek(dense.io.inData.ready) == 1) {
-        val inputPosNext = inputPos + 1
+        inputPos += 1
         idleCount = 0
 
-        if(inputPos == inputss.length - 2) {
+        if(inputPos == inputss.length - 1) {
           executingFeed = false
         }
-
-        inputPos = inputPosNext
       }
 
       if(peek(dense.io.inData.ready) == 0) {
@@ -72,27 +65,31 @@ class BinaryDenseTester(
     while(executingDense && idleCount < idleCycle) {
       if(peek(dense.io.outData.valid) == 1) {
         val outputs = resultss(outputPos)
-        (dense.io.outData.bits zip outputs).foreach{ case (e, a) => expect(e, a) }
+        (dense.io.outData.bits zip outputs)
+          .zipWithIndex
+          .foreach{ case ((a, e), idx) => expect(a, e, s"[$outputPos, $idx] e = ${e.toHexString}, a = ${peek(a).toString(16)}") }
 
         val nextOutput = outputPos + 1
         outputPos = nextOutput % resultss.length
-        executingDense = nextOutput == resultss.length
+
+        if(nextOutput == resultss.length) {
+          executingDense = false
+        }
       }
 
-      poke(dense.io.inData.valid, false)
-
-      if(peek(dense.io.inData.ready) == 1 && moreInputs) {
-        val inputs = inputss(inputPos)
-
-        poke(dense.io.inData.valid, true)
-        (dense.io.inData.bits zip inputs).foreach{ case (b, in) => poke(b, in) }
-
-        val nextInput = inputPos + 1
-        inputPos = nextInput % inputss.length
-        moreInputs = nextInput == inputss.length
+      poke(dense.io.inData.valid, inputPos < inputss.length)
+      poke(dense.io.inData.bits,
+        inputss.lift(inputPos)
+          .map(_.map(_.toInt))
+          .map(_.map(BigInt.apply))
+          .map(_.reverse)
+          .getOrElse(Vector.fill(inputSize)(BigInt(0)))
+      )
+      if(peek(dense.io.inData.ready) == 1 && inputPos < inputss.length) {
+        inputPos += 1
       }
 
-      val isIdle = peek(dense.io.outData.valid) == 0 | (peek(dense.io.inData.ready) == 0 && moreInputs)
+      val isIdle = peek(dense.io.outData.valid) == 0 | (peek(dense.io.inData.ready) == 0 && inputPos < inputss.length)
       if(isIdle) {
         idleCount += 1
       } else {
@@ -104,7 +101,6 @@ class BinaryDenseTester(
 
     if(idleCount >= idleCycle) {
       logger.error("idle count reach max")
-      finish
       fail
     }
   }
@@ -128,6 +124,6 @@ class BinaryDenseSpec extends ChiselFlatSpec {
     lazy val dense = new BinaryDense(inputSize, inputNeuron, cycles, weightss)
     chisel3.iotesters.Driver.execute(args, () => dense) {
       c => new BinaryDenseTester(c, inputSize, inputNeuron, weightSize, weightss, cycles, idleCycle, 1, rnd)
-    }
+    } should be (true)
   }
 }

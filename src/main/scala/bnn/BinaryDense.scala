@@ -2,15 +2,18 @@ package bnn
 
 import chisel3._
 import chisel3.util._
+import chisel3.experimental._
 
+@chiselName
 class BinaryDense(
-                   inputSize: Int,
-                   inputNeuron: Int,
-                   _cyclesForAllWeights: Int,
-                   weightss: Seq[Seq[Boolean]]
+  val inputSize: Int,
+  val inputNeuron: Int,
+  _cyclesForAllWeights: Int,
+  weightss: Seq[Seq[Boolean]]
 ) extends BinaryLayer {
   assert(weightss.map(_.length).forall(_ == inputNeuron))
 
+  // parameters for construction of binary dense
   val inputCount = math.ceil(inputNeuron.toFloat / inputSize.toFloat).toInt
   val inputIdxMax = inputCount - 1
   val outputWidth = unsignedBitLength(weightss.head.length)
@@ -83,7 +86,7 @@ class BinaryDense(
         counter.io.count + buf.io.rdata
     }
 
-    val storedCounts = counts.map{ c => Mux(memIdx.wrapped, 0.U, c) }
+    val storedCounts = counts.map{ c => Mux(inputIdx.wrapped, 0.U, c) }
 
     io.outData.valid := inputIdx.wrapped
     io.outData.bits := VecInit(counts)
