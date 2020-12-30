@@ -26,7 +26,7 @@ class DeluxeCounter(maxValue: Int) extends Module {
     val state = Output(CountState(maxValue))
   })
 
-  val r = RegInit(0.U(unsignedBitLength(maxValue).W))
+  val r = RegInit(0.U(unsignedBitLength(maxValue).max(1).W))
   val reachMax = WireInit(r === maxValue.U)
   val nextValue = WireInit(Mux(reachMax, 0.U, r + 1.U))
 
