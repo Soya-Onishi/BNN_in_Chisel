@@ -115,7 +115,7 @@ class BinaryConv2DUInt (
 
   val outputSize = weightsPerCycle
   val bitWidth = weightss.head.length * inputC
-  val outUIntWidth = unsignedBitLength(bitWidth) + inWidth
+  val outSIntWidth = unsignedBitLength(bitWidth) + inWidth
 
   val weightssPad = (weightss ++ Seq.fill(weightss.length % weightsPerCycle)(Seq.fill(weightsLength)(false))).map {
     weights => weights ++ Seq.fill(weights.length % pixelsPerCycle)(false)
@@ -128,7 +128,7 @@ class BinaryConv2DUInt (
 
   val io = IO(new Bundle {
     val inData = Flipped(DecoupledIO(Pixel(Vec(inputSize, UInt(inWidth.W)))))
-    val outData = DecoupledIO(Pixel(Vec(outputSize, SInt(outUIntWidth.W))))
+    val outData = DecoupledIO(Pixel(Vec(outputSize, SInt(outSIntWidth.W))))
 
     val isInit = Output(Bool())
   })
@@ -138,7 +138,7 @@ class BinaryConv2DUInt (
   val (channelIdxCounter, channelIdx) = DeluxeCounter(inputC - 1)
   val layerBase = Module(new Binary2DLayer(kernelSize, inputSize, inputShape, stride, UInt(inWidth.W)))
   val bitCounters = Seq.fill(weightsPerCycle)(BitCounter(bitWidth))
-  val convTmpBuffers = RegInit(VecInit(Seq.fill(weightsPerCycle)(0.S(outUIntWidth.W))))
+  val convTmpBuffers = RegInit(VecInit(Seq.fill(weightsPerCycle)(0.S(outSIntWidth.W))))
 
   layerBase.io.inData <> io.inData
   layerBase.io.outData.ready := false.B
@@ -176,17 +176,17 @@ class BinaryConv2DUInt (
 
     val weighteds = (convTmpBuffers zip weightss).map {
       case (buf, weights) =>
-        val sintPixels = pixels.map(_.pad(outUIntWidth)).map(_.asSInt())
+        val sintPixels = pixels.map(_.pad(outSIntWidth)).map(_.asSInt())
         (weights zip sintPixels).map{ case (w, p) => Mux(w, p, -p) }.foldLeft(buf)(_ + _)
     }
 
-    io.outData.valid      := weightIdx.wrapped & pixelIdx.wrapped & channelIdx.wrapped
+    io.outData.valid      := pixelIdx.wrapped & channelIdx.wrapped
     io.outData.bits.valid := true.B
     io.outData.bits.bits  := VecInit(weighteds)
 
     convTmpBuffers := MuxCase(VecInit(weighteds), Seq(
-      channelIdx.wrapped & pixelIdx.wrapped & weightIdx.wrapped & io.outData.ready -> 0.U,
-      channelIdx.wrapped & pixelIdx.wrapped & weightIdx.wrapped                    -> convTmpBuffers,
+      (channelIdx.wrapped & pixelIdx.wrapped & io.outData.ready) -> VecInit(Seq.fill(outputSize)(0.S(outSIntWidth.W))),
+      (channelIdx.wrapped & pixelIdx.wrapped)                    -> convTmpBuffers,
     ))
 
     when(!(channelIdx.wrapped & pixelIdx.wrapped & weightIdx.wrapped & !io.outData.ready)) {
