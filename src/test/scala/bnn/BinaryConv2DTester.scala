@@ -58,21 +58,35 @@ class BinaryConv2DTester(
           x <- imageX until imageX + kernelW
         } yield images(y)(x)
 
-        def convolution(mat: Seq[Seq[Boolean]]): Int = {
-          mat.flatten.foldLeft(0) {
-            case (acc, row) => acc + row.toInt
-          }
-        }
-
-        val applied = weightss.map { weights => (weights zip cropped).map { case (w, p) => p.map(_ ^ w) } }
-        val expected = applied.map(convolution).sliding(outputSize, outputSize).toSeq
+        val expected = weightss
+          .map { weights => (weights zip cropped).map { case (w, p) => p.map(_ ^ w).count(identity) }.sum }
+          .sliding(outputSize, outputSize)
+          .toVector
 
         expect(conv.io.outData.bits.left, outX == 0, s"conv for [$imageX, $imageY, $outCount]")
         expect(conv.io.outData.bits.right, outX == outW - 1, s"conv for [$imageX, $imageY, $outCount]")
         expect(conv.io.outData.bits.topLeft, outX == 0 && outY == 0, s"conv for [$imageX, $imageY, $outCount]")
         expect(conv.io.outData.bits.bottomRight, outX == outW - 1 && outY == outH - 1, s"conv for [$imageX, $imageY, $outCount]")
         (conv.io.outData.bits.bits zip expected(outCount)).foreach {
-          case (b, e) => expect(b, BigInt(e), s"conv for [$imageX, $imageY, $outCount]")
+          case (b, e) =>
+            expect(b, BigInt(e), s"convolution for [$imageX, $imageY, $outCount]")
+            if(peek(b) != BigInt(e)) {
+              val croppedStr = cropped.transpose.map(row => "[" + row.map(b => if(b) 1 else 0).mkString(",") + "]").mkString("\n")
+              val weightsStr = weightss.map(row => "[" + row.map(b => if(b) 1 else 0).mkString(",") + "]").mkString("\n")
+              logger.info(
+                s"""image =>
+                  |$croppedStr
+                  |""".stripMargin
+              )
+              logger.info(
+                s"""weight =>
+                   |$weightsStr
+                   |""".stripMargin
+              )
+              step(8)
+              finish
+              throw new Exception
+            }
         }
 
         val nextCount = outCount + 1
@@ -93,7 +107,7 @@ class BinaryConv2DTester(
         }
       }
 
-      poke(conv.io.inData.valid, peek(conv.io.inData.ready) == 1 && sendingPixels)
+      poke(conv.io.inData.valid, sendingPixels)
       images(inY)(inX).zip(conv.io.inData.bits.bits).foreach { case (c, b) => poke(b, c) }
       poke(conv.io.inData.bits.valid, true)
       poke(conv.io.inData.bits.left, inX == 0)
@@ -140,7 +154,7 @@ class BNNTestSpec extends ChiselFlatSpec {
     val weights = Seq.fill(filterNum)(Seq.fill(kernelH * kernelW)(rnd.nextBoolean()))
 
     val backend = "treadle"
-    val args = Array("--backend-name", backend, "--generate-vcd-output", "on")
+    val args = Array("--backend-name", backend, "--generate-vcd-output", "on", "--no-dce")
 
     lazy val conv = new BinaryConv2DBinary(kernelSize, weights, inputC, inputShape, weightsCycle, stride)
     iotesters.Driver.execute(args, () => conv) {
@@ -166,7 +180,7 @@ class BNNTestSpec extends ChiselFlatSpec {
     val backend = "treadle"
     val args = Array("--backend-name", backend, "--generate-vcd-output", "on")
 
-    lazy val conv = new BinaryConv2DBinary(kernelSize, weights, inputC, inputShape, weightsCycle, stride)
+    lazy val conv = new BinaryConv2DBinary(kernelSize, weights, weightsCycle, inputShape, weightsCycle, stride)
     iotesters.Driver.execute(args, () => conv) {
       c => new BinaryConv2DTester(c, weights, inputShape, stride, idleCycle, 2, weightsCycle, rnd)
     } should be(true)

@@ -54,7 +54,7 @@ class Binary2DLayer[InputType <: Data](
   val window = Module(new WindowBuffer(Vec(inputC, inputType), (inputH, inputW), kernelSize, stride))
   val bufferLast = VecInit(inputBuffers.last.init :+ io.inData.bits)
   val bufferConcat = VecInit(inputBuffers.init :+ bufferLast)
-  val nextPixelBits = Mux(io.inData.valid & inputBufferIdx.wrapped & pixelVecIdx.wrapped, bufferConcat, inputBuffers)
+  val nextPixelBits = Mux(io.inData.valid & !isInputBufferFull, bufferConcat, inputBuffers)
   val fedPixels = nextPixelBits.map{ pixels =>
     val bits = pixels.map(_.bits).reduceLeft[Seq[InputType]]{ case (acc, bits) => acc ++ bits }
     val pixel = Wire(Pixel(Vec(inputC, inputType)))

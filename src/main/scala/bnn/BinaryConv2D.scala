@@ -24,8 +24,8 @@ class BinaryConv2DBinary(
   val weightsss = weightss.sliding(weightsPerCycle, weightsPerCycle).toVector
 
   assert(inputC >= inputSize)
-  assert(weightsss.nonEmpty)
-  assert(weightsss.head.length == weightsLength)
+  assert(weightss.nonEmpty)
+  assert(weightss.head.length == weightsLength)
 
   val io = IO(new Bundle {
     val inData = Flipped(DecoupledIO(Pixel(Vec(inputSize, Bool()))))
@@ -36,7 +36,7 @@ class BinaryConv2DBinary(
 
   val (weightIdxCounter, weightIdx) = DeluxeCounter(weightIdxMax)
   val layerBase = Module(new Binary2DLayer(kernelSize, inputSize, inputShape, stride, Bool()))
-  val bitCounters = Seq.fill(weightsPerCycle)(Module(new BitCounter(bitWidth)))
+  val bitCounters = Seq.fill(weightsPerCycle)(BitCounter(bitWidth))
 
   layerBase.io.inData <> io.inData
   layerBase.io.outData.ready := false.B
@@ -66,13 +66,13 @@ class BinaryConv2DBinary(
         val weightssVecBase = weightss.map(weights => VecInit(weights.map(_.B)))
         val weightssVec = weightssVecBase ++ padding
 
-        idx.U(unsignedBitLength(weightIdxMax)) -> VecInit(weightssVec)
+        idx.U(unsignedBitLength(weightIdxMax).max(1).W) -> VecInit(weightssVec)
     })
 
     val weighted = weightss.map(weights => (weights zip layerBase.io.outData.bits).flatMap { case (w, pixels) => pixels.bits.map(w ^ _) })
     val counts = (weighted zip bitCounters).map{
       case (v, counter) =>
-        counter.io.in := v
+        counter.io.in := VecInit(v)
         counter.io.count
     }
 
