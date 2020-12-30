@@ -88,7 +88,8 @@ class WindowBuffer[T <: Data](gen: T, inputSize: (Int, Int), kernelSize: (Int, I
     window := VecInit(nextWindow)
 
     buffersOpt.foreach { buffers =>
-      val nextLasts = heads ++ io.nextPixel.bits
+      val last = Mux(io.nextPixel.valid, io.nextPixel.bits, VecInit(Seq.fill(stride)(initPixel)))
+      val nextLasts = heads ++ last
       (nextLasts zip buffers).foreach{ case (head, buffer) => buffer.write(memIdx, head) }
     }
 
