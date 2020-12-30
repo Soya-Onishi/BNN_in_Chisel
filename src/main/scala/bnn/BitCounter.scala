@@ -123,4 +123,12 @@ class HA extends Module {
   io.cout := io.a & io.b
 }
 
+object BitCounter {
+  def apply(width: Int): BitCounter = {
+    val counter = Module(new BitCounter(width))
+    counter.io.in := DontCare
+
+    counter
+  }
+}
 
