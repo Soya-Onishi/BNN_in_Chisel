@@ -78,15 +78,10 @@ class BinaryConv2DActivationTester(
           x <- imageX until imageX + kernelW
         } yield images(y)(x)
 
-        def convolution(mat: Seq[Seq[Boolean]]): Int = {
-          mat.flatten.foldLeft(0) {
-            case (acc, row) => acc + row.toInt
-          }
-        }
-
-        val applied = weightss.map { weights => (weights zip cropped).map { case (w, p) => p.map(_ ^ w) } }
-        val expected = applied.map(convolution).zip(biases)
-          .map { case (value, bias) => value > bias }
+        val expected = weightss
+          .map { weights => (weights zip cropped).map { case (w, p) => p.map(_ ^ w).count(identity) }.sum }
+          .zip(biases)
+          .map{ case (s, b) => s > b }
           .sliding(activationSize, activationSize)
           .toVector(outIdx)
 
@@ -182,6 +177,47 @@ class BinaryConv2DActivationFlatSpec extends ChiselFlatSpec {
         activationSize,
         outIdxMax,
         1,
+        rnd
+      )
+    } should be (true)
+  }
+
+  "combination of conv2D and activation layers on multi times" should "works correctly" in {
+    val rnd = new Random(0)
+
+    val kernelH = 3
+    val kernelW = 3
+    val kernelSize = (kernelH, kernelW)
+    val inputC = 3
+    val inputShape = (18, 18, inputC)
+    val filterNum = 9
+    val countsForAllWeights = 3
+    val idleCycle = 1000
+    val stride = 1
+    val activationSize = math.ceil(filterNum.toFloat / countsForAllWeights.toFloat).toInt
+    val outIdxMax = math.ceil(filterNum.toFloat / activationSize.toFloat).toInt - 1
+
+    val weightss = Seq.fill(filterNum)(Seq.fill(kernelH * kernelW)(rnd.nextBoolean()))
+    val biases = Seq.fill(filterNum)(rnd.nextInt(kernelH * kernelW * inputC))
+
+    val backend = "treadle"
+    val args = Array("--backend-name", backend, "--generate-vcd-output", "on", "--no-dce")
+
+    lazy val conv = new BinaryConv2DBinary(kernelSize, weightss, inputC, inputShape, countsForAllWeights, stride)
+    lazy val activation = new BinaryActivationConv2D(activationSize, unsignedBitLength(kernelH * kernelW * inputC), biases)
+    lazy val top = new Conv2DAndActivation(conv, activation, inputC, activationSize)
+    iotesters.Driver.execute(args, () => top) {
+      c => new BinaryConv2DActivationTester(
+        c,
+        weightss,
+        biases,
+        kernelSize,
+        inputShape,
+        stride,
+        idleCycle,
+        activationSize,
+        outIdxMax,
+        2,
         rnd
       )
     } should be (true)

@@ -47,8 +47,6 @@ class Binary2DLayer[InputType <: Data](
   val isInputBufferFull = RegInit(false.B)
   val (inputBufferIdxCounter, inputBufferIdx) = DeluxeCounter(inputBufferIdxMax)
   val (pixelVecIdxCounter, pixelVecIdx) = DeluxeCounter(pixelVecIdxMax)
-  val reachBottomRight = RegInit(false.B)
-  val isBottomRight = RegInit(false.B)
   val readyForFeeding = (inputBufferIdx.wrapped & pixelVecIdx.wrapped & io.inData.valid) | isInputBufferFull
 
   val window = Module(new WindowBuffer(Vec(inputC, inputType), (inputH, inputW), kernelSize, stride))
@@ -67,6 +65,9 @@ class Binary2DLayer[InputType <: Data](
 
     pixel
   }
+
+  val reachBottomRight = nextPixelBits.flatten.foldLeft(false.B) { case (acc, pixel) => acc | pixel.bottomRight }
+  val sentBottomRight = RegInit(false.B)
 
   io.inData.ready  := !isInputBufferFull & globalState =/= init
   io.outData.valid := window.io.window.valid & globalState === execute_state
@@ -123,12 +124,15 @@ class Binary2DLayer[InputType <: Data](
   }
 
   private def executionState(): Unit = {
+    when(window.io.isBottomRight) {
+      sentBottomRight := true.B
+    }
+
     when(io.outData.ready & io.outData.valid) {
       globalState := wait_next
     }
 
     when(!window.io.window.valid & readyForFeeding) {
-      val reachBottomRight = nextPixelBits.flatten.foldLeft(false.B) { case (acc, pixel) => acc | pixel.bottomRight }
       shiftPolicy := Mux(reachBottomRight, force_shift, shiftPolicy)
       window.io.nextPixel.valid := true.B
       isInputBufferFull := false.B
@@ -146,7 +150,8 @@ class Binary2DLayer[InputType <: Data](
           val reachBottomRight = nextPixelBits.flatten.foldLeft(false.B) { case (acc, pixel) => acc | pixel.bottomRight }
 
           window.io.nextPixel.valid := true.B
-          globalState               := Mux(isBottomRight, fill_buffer, execute_state)
+          sentBottomRight           := false.B
+          globalState               := Mux(sentBottomRight, fill_buffer, execute_state)
           isInputBufferFull         := false.B
           shiftPolicy               := Mux(reachBottomRight, force_shift, wait_for_valid)
         }
@@ -157,8 +162,9 @@ class Binary2DLayer[InputType <: Data](
         val topLeftInBuffer = nextPixelBits.flatten.foldLeft(false.B) { case (acc, pixel) => acc | pixel.topLeft }
 
         window.io.forceShift := true.B
-        globalState          := Mux(isBottomRight, fill_buffer, execute_state)
-        shiftPolicy          := Mux(topLeftInBuffer, wait_for_valid, force_shift)
+        globalState          := Mux(sentBottomRight, fill_buffer, execute_state)
+        sentBottomRight      := false.B
+        shiftPolicy          := Mux(topLeftInBuffer | sentBottomRight, wait_for_valid, force_shift)
       }
     }
   }
