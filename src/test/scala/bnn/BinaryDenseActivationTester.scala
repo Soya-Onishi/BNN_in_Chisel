@@ -36,14 +36,11 @@ class BinaryDenseActivationTester(
   val outputSize = module.activation.size
   val inputs = Vector.fill(module.dense.inputNeuron)(rnd.nextBoolean())
   val inputss = inputs
-    .map(_.toInt)
-    .map(BigInt.apply)
-    .sliding(inputSize, inputSize).toVector
+    .sliding(inputSize, inputSize)
+    .map(ins => ins ++ Seq.fill(inputSize - ins.length)(false))
+    .toVector
   val expects = (weightss zip biases).map{ case (weights, bias) =>
     (weights zip inputs).map{ case (w, i) => w ^ i }.count(identity) > bias
-  }
-  val es = (weightss zip biases).map{ case (weights, bias) =>
-    (weights zip inputs).map{ case (w, i) => w ^ i }.count(identity)
   }
   val expectss = expects.sliding(outputSize, outputSize).toVector
 
@@ -59,7 +56,7 @@ class BinaryDenseActivationTester(
 
   while(executing && idleCycle < idleCount) {
     poke(module.io.inData.valid, (inIdx < inputss.length).toInt)
-    poke(module.io.inData.bits, inputss.lift(inIdx).map(_.reverse).getOrElse(inDefault))
+    poke(module.io.inData.bits, inputss.lift(inIdx).map(_.reverse.map(b => if(b) BigInt(1) else BigInt(0))).getOrElse(inDefault))
     if(inIdx < inputss.length & peek(module.io.inData.ready) == 1) {
       inIdx += 1
       idleCycle = 0
@@ -110,12 +107,14 @@ class BinaryDenseActivationTester(
 }
 
 class BinaryDenseAndActivationFlatSpec extends ChiselFlatSpec {
-  "combination of dense and activation layers" should "works correctly" in {
+  def runDenseActivation(
+    inputNeuron: Int = 128,
+    inputSize: Int = 8,
+    cyclesForAllWeights: Int = 4,
+    weightNumber: Int = 12,
+    applyCount: Int = 1
+  ): Unit = {
     val rnd = new Random(0)
-    val inputNeuron = 128
-    val inputSize = 8
-    val cyclesForAllWeights = 4
-    val weightNumber = 12
     val activationSize = math.ceil(weightNumber.toFloat / cyclesForAllWeights.toFloat).toInt
     val weightss = Vector.fill(weightNumber)(Vector.fill(inputNeuron)(rnd.nextBoolean()))
     val biases = Vector.fill(weightNumber)(rnd.nextInt(inputNeuron))
@@ -132,37 +131,35 @@ class BinaryDenseAndActivationFlatSpec extends ChiselFlatSpec {
         weightss,
         biases,
         idleCount = 200,
-        inputMax = 1,
+        inputMax = applyCount,
         rnd
       )
     } should be (true)
   }
 
+  "combination of dense and activation layers" should "works correctly" in {
+    runDenseActivation()
+  }
+
   "combination of dense and activation layers for multi times" should "works correctly" in {
-    val rnd = new Random(0)
-    val inputNeuron = 128
-    val inputSize = 8
-    val cyclesForAllWeights = 4
-    val weightNumber = 12
-    val activationSize = math.ceil(weightNumber.toFloat / cyclesForAllWeights.toFloat).toInt
-    val weightss = Vector.fill(weightNumber)(Vector.fill(inputNeuron)(rnd.nextBoolean()))
-    val biases = Vector.fill(weightNumber)(rnd.nextInt(inputNeuron))
+    runDenseActivation(applyCount = 2)
+  }
 
-    val backend = "treadle"
-    val args = Array("--backend-name", backend, "--generate-vcd-output", "on", "--no-dce")
+  "weights % weightsPerCycle != 0" should "works correctly" in {
+    runDenseActivation(weightNumber = 13)
+    runDenseActivation(weightNumber = 13, cyclesForAllWeights = 8)
+    runDenseActivation(weightNumber = 13, cyclesForAllWeights = 2)
+  }
 
-    lazy val dense = new BinaryDense(inputSize, inputNeuron, cyclesForAllWeights, weightss)
-    lazy val activation = new BinaryActivationDense(activationSize, unsignedBitLength(inputNeuron), biases)
-    lazy val top = new DenseAndActivation(dense, activation, inputSize)
-    iotesters.Driver.execute(args, () => top) {
-      c => new BinaryDenseActivationTester(
-        c,
-        weightss,
-        biases,
-        idleCount = 200,
-        inputMax = 3,
-        rnd
-      )
-    } should be (true)
+  "weights % weightsPerCycle != 0, multi times" should "works correctly" in {
+    runDenseActivation(weightNumber = 13, applyCount = 2)
+  }
+
+  "inputNeuron % inputSize != 0" should "works correctly" in {
+    runDenseActivation(inputSize = 15)
+  }
+
+  "inputNeuron % inputSize != 0, multiple times" should "works correctly" in {
+    runDenseActivation(inputSize = 15, applyCount = 2)
   }
 }
