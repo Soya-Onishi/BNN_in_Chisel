@@ -73,7 +73,12 @@ class BinaryDense(
     val weightss = MuxLookup[UInt, Vec[Vec[Bool]]](weightIdx.current, defaultBools, weightssss.zipWithIndex.map {
       case (weightsss, idx) =>
         val elems = weightsss.zipWithIndex.map {
-          case (weightss, idx) => idx.U(unsignedBitLength(inputIdxMax).W) -> VecInit(weightss.map(weights => VecInit(weights.map(_.B))))
+          case (weightss, idx) =>
+            val i = idx.U(unsignedBitLength(inputIdxMax).W)
+            val pad = Seq.fill(weightsPerCycle - weightss.length)(VecInit(Seq.fill(inputSize)(false.B)))
+            val ws = weightss.map(weights => VecInit(weights.map(_.B))) ++ pad
+
+            i -> VecInit(ws)
         }
 
         idx.U(unsignedBitLength(weightIdxMax).W) -> MuxLookup[UInt, Vec[Vec[Bool]]](inputIdx.current, defaultBools, elems)
