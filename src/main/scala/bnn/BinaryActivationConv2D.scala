@@ -19,7 +19,7 @@ class BinaryActivationConv2D(
   val outValid = RegInit(false.B)
   val outBits = Reg(Pixel(Vec(size, Bool())))
 
-  val activation = Module(new BinaryActivation2(size, inputWidth, biases))
+  val activation = Module(new BinaryActivation(size, inputWidth, biases))
 
   // ready signal is used here to determine whether renew registers
   // and this signal is passed to previous layer(i.e. BinaryConv2D)

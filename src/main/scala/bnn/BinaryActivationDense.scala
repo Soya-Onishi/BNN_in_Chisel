@@ -19,7 +19,7 @@ class BinaryActivationDense(
   val outValid = RegInit(false.B)
   val outBits = Reg(Vec(size, Bool()))
 
-  val activation = Module(new BinaryActivation2(size, inputWidth, biases))
+  val activation = Module(new BinaryActivation(size, inputWidth, biases))
 
   io.inData.ready := io.outData.ready
   when(io.outData.ready) {
