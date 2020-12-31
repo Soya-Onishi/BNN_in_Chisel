@@ -309,6 +309,22 @@ class BNNTestSpec extends ChiselFlatSpec {
     binaryConvTest(stride = 2, inputShape = (9, 9, 3))
   }
 
+  "binary convolution layer 2 stride and input shape (9, 9, 3) multi times" should "works correctly" in {
+    binaryConvTest(stride = 2, inputShape = (9, 9, 3), applyCount = 2)
+  }
+
+  "when kernelW and inputW are indivisible" should "works correctly" in {
+    binaryConvTest(inputShape = (11, 11, 3), kernelSize = (3, 3))
+  }
+
+  "when right edge and bottom edge are remained" should "works correctly" in {
+    binaryConvTest(stride = 2, inputShape = (6, 6, 3), kernelSize = (3, 3))
+  }
+
+  "too small to put window sram buffer" should "works correctly" in {
+    binaryConvTest(inputShape = (3, 3, 3), kernelSize = (3, 3))
+  }
+
   "binary convolutional layer two stride multi times" should "works correctly" in {
     binaryConvTest(stride = 2, applyCount = 2)
   }
