@@ -23,12 +23,13 @@ class DeluxeCounter(maxValue: Int) extends Module {
 
   val io = IO(new Bundle {
     val enable = Input(Bool())
+    val zero = Input(Bool())
     val state = Output(CountState(maxValue))
   })
 
   val r = RegInit(0.U(unsignedBitLength(maxValue).max(1).W))
   val reachMax = WireInit(r === maxValue.U)
-  val nextValue = WireInit(Mux(reachMax, 0.U, r + 1.U))
+  val nextValue = WireInit(Mux(reachMax | io.zero, 0.U, r + 1.U))
 
   when(io.enable) {
     r := nextValue
@@ -41,12 +42,17 @@ class DeluxeCounter(maxValue: Int) extends Module {
   def count(): Unit = {
     this.io.enable := true.B
   }
+
+  def zero(): Unit = {
+    this.io.zero := true.B
+  }
 }
 
 object DeluxeCounter {
   def apply(maxValue: Int): (DeluxeCounter, CountState) = {
     val m = Module(new DeluxeCounter(maxValue))
     m.io.enable := false.B
+    m.io.zero := false.B
 
     (m, m.io.state)
   }
