@@ -78,10 +78,12 @@ class BinaryConv2DActivationTester(
           x <- imageX until imageX + kernelW
         } yield images(y)(x)
 
-        val expected = weightss
+        val expectedBase = weightss
           .map { weights => (weights zip cropped).map { case (w, p) => p.map(_ ^ w).count(identity) }.sum }
           .zip(biases)
           .map{ case (s, b) => s > b }
+
+        val expected = (expectedBase ++ Seq.fill(expectedBase.length % activationSize)(false))
           .sliding(activationSize, activationSize)
           .toVector(outIdx)
 
@@ -90,7 +92,7 @@ class BinaryConv2DActivationTester(
         expect(module.io.outData.bits.topLeft, outX == 0 && outY == 0, s"conv for [$imageX, $imageY, $outIdx]")
         expect(module.io.outData.bits.bottomRight, outX == outW - 1 && outY == outH - 1, s"conv for [$imageX, $imageY, $outIdx]")
         (module.io.outData.bits.bits zip expected).foreach {
-          case (b, e) => expect(b, BigInt(e.toInt), s"conv for [$imageX, $imageY, $outIdx]")
+          case (b, e) => expect(b, e, s"conv for [$imageX, $imageY, $outIdx]")
         }
 
         outIdx = outIdx + 1
@@ -141,18 +143,19 @@ class BinaryConv2DActivationTester(
 }
 
 class BinaryConv2DActivationFlatSpec extends ChiselFlatSpec {
-  "combination of conv2D and activation layers" should "works correctly" in {
+  def runConvActivation(
+    kernelSize: (Int, Int) = (3, 3),
+    inputShape: (Int, Int, Int) = (18, 18, 3),
+    filterNum: Int = 9,
+    countsForAllWeights: Int = 3,
+    stride: Int = 1,
+    idleCycle: Int = 200,
+    applyCount: Int = 1
+  ): Unit = {
     val rnd = new Random(0)
 
-    val kernelH = 3
-    val kernelW = 3
-    val kernelSize = (kernelH, kernelW)
-    val inputC = 3
-    val inputShape = (18, 18, inputC)
-    val filterNum = 9
-    val countsForAllWeights = 3
-    val idleCycle = 1000
-    val stride = 1
+    val (kernelH, kernelW) = kernelSize
+    val (inputH, inputW, inputC) = inputShape
     val activationSize = math.ceil(filterNum.toFloat / countsForAllWeights.toFloat).toInt
     val outIdxMax = math.ceil(filterNum.toFloat / activationSize.toFloat).toInt - 1
 
@@ -176,50 +179,26 @@ class BinaryConv2DActivationFlatSpec extends ChiselFlatSpec {
         idleCycle,
         activationSize,
         outIdxMax,
-        1,
+        applyCount,
         rnd
       )
     } should be (true)
   }
 
+  "combination of conv2D and activation layers" should "works correctly" in {
+    runConvActivation()
+  }
+
   "combination of conv2D and activation layers on multi times" should "works correctly" in {
-    val rnd = new Random(0)
+    runConvActivation(applyCount = 2)
+  }
 
-    val kernelH = 3
-    val kernelW = 3
-    val kernelSize = (kernelH, kernelW)
-    val inputC = 3
-    val inputShape = (18, 18, inputC)
-    val filterNum = 9
-    val countsForAllWeights = 3
-    val idleCycle = 1000
-    val stride = 1
-    val activationSize = math.ceil(filterNum.toFloat / countsForAllWeights.toFloat).toInt
-    val outIdxMax = math.ceil(filterNum.toFloat / activationSize.toFloat).toInt - 1
+  "number of weights % conv per cycle != 0" should "works correctly" in {
+    runConvActivation(countsForAllWeights = 4)
+    runConvActivation(countsForAllWeights = 2)
+  }
 
-    val weightss = Seq.fill(filterNum)(Seq.fill(kernelH * kernelW)(rnd.nextBoolean()))
-    val biases = Seq.fill(filterNum)(rnd.nextInt(kernelH * kernelW * inputC))
-
-    val backend = "treadle"
-    val args = Array("--backend-name", backend, "--generate-vcd-output", "on", "--no-dce")
-
-    lazy val conv = new BinaryConv2DBinary(kernelSize, weightss, inputC, inputShape, countsForAllWeights, stride)
-    lazy val activation = new BinaryActivationConv2D(activationSize, unsignedBitLength(kernelH * kernelW * inputC), biases)
-    lazy val top = new Conv2DAndActivation(conv, activation, inputC, activationSize)
-    iotesters.Driver.execute(args, () => top) {
-      c => new BinaryConv2DActivationTester(
-        c,
-        weightss,
-        biases,
-        kernelSize,
-        inputShape,
-        stride,
-        idleCycle,
-        activationSize,
-        outIdxMax,
-        2,
-        rnd
-      )
-    } should be (true)
+  "number of weights % conv per cycle != 0 multi cycle" should "works correctly" in {
+    runConvActivation(countsForAllWeights = 4, applyCount = 2)
   }
 }
