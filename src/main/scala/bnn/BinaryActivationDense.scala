@@ -13,6 +13,16 @@ class BinaryActivationDense(
     val outData = DecoupledIO(Vec(size, Bool()))
   })
 
+  val activation = Module(new BinaryActivation[Vec[UInt]](
+    size,
+    Vec(size, UInt(inputWidth.W)),
+    biases
+  ))
+
+  io.inData <> activation.io.inData
+  io.outData <> activation.io.outData
+
+  /*
   val inValid = RegInit(false.B)
   val inBits = Reg(Vec(size, UInt(inputWidth.W)))
 
@@ -36,4 +46,5 @@ class BinaryActivationDense(
   activation.io.outData.ready := io.outData.ready
   io.outData.bits  := outBits
   io.outData.valid := outValid
+   */
 }

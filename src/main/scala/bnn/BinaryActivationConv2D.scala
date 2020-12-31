@@ -13,6 +13,16 @@ class BinaryActivationConv2D(
     val outData = DecoupledIO(Pixel(Vec(size, Bool())))
   })
 
+  val activation = Module(new BinaryActivation[Pixel[Vec[UInt]]](
+    size,
+    Pixel(Vec(size, UInt(inputWidth.W))),
+    biases
+  ))
+
+  io.inData <> activation.io.inData
+  io.outData <> activation.io.outData
+
+  /*
   val inValid = RegInit(false.B)
   val inBits = Reg(Pixel(Vec(size, UInt(inputWidth.W))))
 
@@ -44,4 +54,5 @@ class BinaryActivationConv2D(
   activation.io.outData.ready := io.outData.ready
   io.outData.valid := outValid
   io.outData.bits  := outBits
+  */
 }
