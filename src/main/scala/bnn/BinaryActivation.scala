@@ -38,7 +38,8 @@ class BinaryActivation[T <: Data : ActivationUtil](
   val biasIdxMax = math.ceil(biases.length.toFloat / size.toFloat).toInt - 1
 
   val (biasCounter, biasIdx) = DeluxeCounter(biasIdxMax)
-  val validBiases = biases.map(b => (true, b)) ++ Seq.fill(biases.length % size)((false, 0))
+  val padSize = if(biases.length % size == 0) 0 else size - biases.length % size
+  val validBiases = biases.map(b => (true, b)) ++ Seq.fill(padSize)((false, 0))
   val biasesBase = util.toBiases(validBiases)
   val biasess = WireInit(VecInit(biasesBase.sliding(size, size).map(v => VecInit(v)).toSeq))
   val activateds = util.activation(in.bits, biasess(biasIdx.current))
