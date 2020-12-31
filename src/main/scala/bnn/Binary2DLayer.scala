@@ -17,10 +17,10 @@ class Binary2DLayer[InputType <: Data](
   val (inputH, inputW, inputC) = inputShape
   val pixelVecSize = math.ceil(inputC.toFloat / inputSize.toFloat).toInt
   val outputSize = kernelH * kernelW
-  val windowW = math.ceil(kernelW.toFloat / stride.toFloat).toInt
-  val windowH = kernelH * stride
   val inputBufferIdxMax = stride - 1
   val pixelVecIdxMax = pixelVecSize - 1
+  val horizontalIdxMax = (inputW - kernelW) / stride + 1
+  val rightEdgeBufCount = (if(inputW % stride == 0) stride else inputW % stride) - 1
 
   assert(inputC >= inputSize)
 
@@ -47,13 +47,18 @@ class Binary2DLayer[InputType <: Data](
   val isInputBufferFull = RegInit(false.B)
   val (inputBufferIdxCounter, inputBufferIdx) = DeluxeCounter(inputBufferIdxMax)
   val (pixelVecIdxCounter, pixelVecIdx) = DeluxeCounter(pixelVecIdxMax)
-  val readyForFeeding = (inputBufferIdx.wrapped & pixelVecIdx.wrapped & io.inData.valid) | isInputBufferFull
+  val (hIdxCounter, hIdx) = DeluxeCounter(horizontalIdxMax)
+  val isRightEdge = WireInit(hIdx.wrapped)
+  val readyForFeeding =
+    (inputBufferIdx.wrapped & pixelVecIdx.wrapped & io.inData.valid) |
+    (isRightEdge & inputBufferIdx.current === rightEdgeBufCount.U & pixelVecIdx.wrapped & io.inData.valid) |
+    isInputBufferFull
 
   val window = Module(new WindowBuffer(Vec(inputC, inputType), (inputH, inputW), kernelSize, stride))
   val bufferLast = VecInit(inputBuffers.last.init :+ io.inData.bits)
   val bufferConcat = VecInit(inputBuffers.init :+ bufferLast)
   val nextPixelBits = Mux(io.inData.valid & !isInputBufferFull, bufferConcat, inputBuffers)
-  val fedPixels = nextPixelBits.map{ pixels =>
+  val fedNormalPixels = nextPixelBits.map{ pixels =>
     val bits = pixels.map(_.bits).reduceLeft[Seq[InputType]]{ case (acc, bits) => acc ++ bits }
     val pixel = Wire(Pixel(Vec(inputC, inputType)))
     pixel.bits        := VecInit(bits.take(inputC))
@@ -65,6 +70,26 @@ class Binary2DLayer[InputType <: Data](
 
     pixel
   }
+
+  // RE means Right Edge
+  val bufRESize = rightEdgeBufCount + 1
+  val bufferRELast = dontTouch(WireInit(VecInit(inputBuffers.take(bufRESize).last.init :+ io.inData.bits)))
+  val bufferREConcat = dontTouch(WireInit(VecInit(inputBuffers.take(bufRESize).init :+ bufferRELast)))
+  val nextPixelREBits = dontTouch(WireInit(Mux(io.inData.valid & !isInputBufferFull, bufferREConcat, VecInit(inputBuffers.take(bufRESize)))))
+  val fedREInitPixels = nextPixelREBits.take(bufRESize).map{ pixels =>
+    val bits = pixels.map(_.bits).reduceLeft[Seq[InputType]]{ case (acc, bits) => acc ++ bits }
+    val pixel = Wire(Pixel(Vec(inputC, inputType)))
+    pixel.bits        := VecInit(bits.take(inputC))
+    pixel.left        := pixels.head.left
+    pixel.right       := pixels.head.right
+    pixel.topLeft     := pixels.head.topLeft
+    pixel.bottomRight := pixels.head.bottomRight
+    pixel.valid       := pixels.head.valid
+
+    pixel
+  }
+  val invalidPixel = Pixel.invalid(Vec(inputC, inputType))
+  val fedREPixels = fedREInitPixels ++ Seq.fill(stride - bufRESize)(invalidPixel)
 
   val reachBottomRight = nextPixelBits.flatten.foldLeft(false.B) { case (acc, pixel) => acc | pixel.bottomRight }
   val sentBottomRight = RegInit(false.B)
@@ -80,7 +105,7 @@ class Binary2DLayer[InputType <: Data](
 
   window.io.forceShift      := false.B
   window.io.nextPixel.valid := false.B
-  window.io.nextPixel.bits  := VecInit(fedPixels)
+  window.io.nextPixel.bits  := Mux(isRightEdge, VecInit(fedREPixels), VecInit(fedNormalPixels))
 
   // step next index
   when(io.inData.valid & !isInputBufferFull & globalState =/= init) {
@@ -89,7 +114,17 @@ class Binary2DLayer[InputType <: Data](
     pixelVecIdxCounter.count()
     when(pixelVecIdx.wrapped) {
       inputBufferIdxCounter.count()
-      isInputBufferFull := pixelVecIdx.wrapped & inputBufferIdx.wrapped
+      val normalFull = pixelVecIdx.wrapped & inputBufferIdx.wrapped
+      val rightEdgeFull = pixelVecIdx.wrapped & (inputBufferIdx.current === rightEdgeBufCount.U) & isRightEdge
+      isInputBufferFull := normalFull | rightEdgeFull
+    }
+  }
+
+  when(window.io.nextPixel.valid) {
+    hIdxCounter.count()
+    when(isRightEdge) {
+      inputBufferIdxCounter.zero()
+      pixelVecIdxCounter.zero()
     }
   }
 
