@@ -53,19 +53,9 @@ class WindowBuffer[T <: Data](gen: T, inputSize: (Int, Int), kernelSize: (Int, I
   val initMemIdx = RegInit(0.U(requiredLength(memDepth).W))
   val counter = dontTouch(RegInit(0.U(32.W)))
 
-  private def verticalFlatten[A](seqs: Seq[Seq[A]]): Seq[A] = {
-    if(seqs.isEmpty) Seq.empty[A]
-    else {
-      val minLength = seqs.map(_.length).min
-      val verticals = for(idx <- 0 until minLength) yield seqs.map(_(idx))
-
-      verticals.flatten
-    }
-  }
-
   io.isInit        := globalState === init
   io.window.valid  := globalState === output_window
-  io.window.bits   := VecInit(window.sliding(stride, stride).flatMap(arr => verticalFlatten(arr).take(kernelW)).toSeq)
+  io.window.bits   := VecInit(window.sliding(stride, stride).toSeq.flatMap(arr => arr.transpose.flatten.take(kernelW)))
   io.isLeft        := xstrideCount === 0.U
   io.isRight       := xstrideCount === (xMaxApplyCount - 1).U
   io.isTopLeft     := (xstrideCount === 0.U) & (ystrideCount === 0.U)
