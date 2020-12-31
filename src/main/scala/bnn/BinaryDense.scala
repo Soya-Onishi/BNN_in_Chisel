@@ -76,7 +76,14 @@ class BinaryDense(
           case (weightss, idx) =>
             val i = idx.U(unsignedBitLength(inputIdxMax).W)
             val pad = Seq.fill(weightsPerCycle - weightss.length)(VecInit(Seq.fill(inputSize)(false.B)))
-            val ws = weightss.map(weights => VecInit(weights.map(_.B))) ++ pad
+            val wssBase = weightss.map { weights =>
+              val padSize = inputSize - weights.length
+              val pad = Seq.fill(padSize)(false.B)
+              val base = weights.map(_.B)
+
+              VecInit(base ++ pad)
+            }
+            val ws = wssBase ++ pad
 
             i -> VecInit(ws)
         }
