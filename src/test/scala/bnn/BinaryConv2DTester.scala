@@ -8,6 +8,7 @@ import chisel3.iotesters.{ChiselFlatSpec, PeekPokeTester}
 class BinaryConv2DTester(
   conv: BinaryConv2DBinary,
   weightss: Seq[Seq[Boolean]],
+  inputSize: Int,
   inputShape: (Int, Int, Int),
   stride: Int,
   idleCycle: Int,
@@ -16,10 +17,12 @@ class BinaryConv2DTester(
   rnd: Random
 ) extends PeekPokeTester(conv) {
   val (inputH, inputW, inputC) = inputShape
-  val images = Seq.fill(inputH)(Seq.fill(inputW)(Seq.fill(inputC)(rnd.nextBoolean())))
+  val inCountMax = math.ceil(inputC.toFloat / inputSize.toFloat).toInt
+  val images = Seq.fill(inputH)(Seq.fill(inputW)((Seq.fill(inputC)(rnd.nextBoolean()) ++ Seq.fill(inCountMax * inputSize - inputC)(false)).sliding(inputSize, inputSize).toSeq))
   val (kernelH, kernelW) = (conv.kernelH, conv.kernelW)
   val memDepth = math.ceil((inputW - kernelW).toFloat / stride.toFloat).toInt
   val outputSize = math.ceil(weightss.length.toFloat / countsForAllWeights.toFloat).toInt
+  val outCountMax = math.ceil(weightss.length.toFloat / conv.outputSize.toFloat).toInt
 
   poke(conv.io.outData.ready, true)
   poke(conv.io.inData.valid, false)
@@ -34,6 +37,7 @@ class BinaryConv2DTester(
     var inY = 0
     var outX = 0
     var outY = 0
+    var inCount = 0
     var outCount = 0
     var sendingPixels = true
     var executingConv = true
@@ -56,7 +60,7 @@ class BinaryConv2DTester(
         val cropped = for {
           y <- imageY until imageY + kernelH
           x <- imageX until imageX + kernelW
-        } yield images(y)(x)
+        } yield images(y)(x).flatten.take(inputC)
 
         val expected = weightss
           .map { weights => (weights zip cropped).map { case (w, p) => p.map(_ ^ w).count(identity) }.sum }
@@ -83,16 +87,15 @@ class BinaryConv2DTester(
                    |$weightsStr
                    |""".stripMargin
               )
-              step(8)
+              step(1)
               finish
               throw new Exception
             }
         }
 
         val nextCount = outCount + 1
-        outCount = nextCount % countsForAllWeights
-
-        if(nextCount == countsForAllWeights) {
+        outCount = nextCount % outCountMax
+        if(nextCount == outCountMax) {
           val nextX = outX + 1
           val nextY = outY + 1
 
@@ -108,7 +111,7 @@ class BinaryConv2DTester(
       }
 
       poke(conv.io.inData.valid, sendingPixels)
-      images(inY)(inX).zip(conv.io.inData.bits.bits).foreach { case (c, b) => poke(b, c) }
+      images(inY)(inX)(inCount).zip(conv.io.inData.bits.bits).foreach { case (c, b) => poke(b, c) }
       poke(conv.io.inData.bits.valid, true)
       poke(conv.io.inData.bits.left, inX == 0)
       poke(conv.io.inData.bits.right, inX == inputW - 1)
@@ -116,15 +119,19 @@ class BinaryConv2DTester(
       poke(conv.io.inData.bits.bottomRight, inX == inputW - 1 && inY == inputH - 1)
 
       if (peek(conv.io.inData.ready) == 1 && sendingPixels) {
+        val nextCount = inCount + 1
         val nextX = inX + 1
         val nextY = inY + 1
 
-        inX = nextX % inputW
-        if (nextX == inputW) {
-          inY = nextY % inputH
+        inCount = nextCount % inCountMax
+        if(nextCount == inCountMax) {
+          inX = nextX % inputW
+          if (nextX == inputW) {
+            inY = nextY % inputH
+          }
         }
 
-        sendingPixels = !((nextX == inputW) && (nextY == inputH))
+        sendingPixels = !((nextX == inputW) && (nextY == inputH) && (nextCount == inCountMax))
       }
 
       step(1)
@@ -207,9 +214,9 @@ class BinaryConv2DUIntTester(
 
     if(peek(conv.io.outData.valid) == 1) {
       val cropped = for {
-        y <- outY until outY + kernelH
-        x <- outX until outX + kernelW
-      } yield images(y)(x).flatten
+        y <- outY * stride until outY * stride + kernelH
+        x <- outX * stride until outX * stride + kernelW
+      } yield images(y)(x).flatten.take(inputC)
 
       val expects = weightsss(outCount).map {
         weights => (weights zip cropped).map { case (w, cs) => cs.map(c => if(w) c else -c).sum }.sum
@@ -266,52 +273,62 @@ class BinaryConv2DUIntTester(
 }
 
 class BNNTestSpec extends ChiselFlatSpec {
-  "binary convolutional layer" should "works correctly" in {
+  def binaryConvTest(
+    kernelSize: (Int, Int) = (3, 3),
+    inputSize: Int = 3,
+    inputShape: (Int, Int, Int) = (18, 18, 3),
+    filterNum: Int = 9,
+    weightsCycle: Int = 3,
+    stride: Int = 1,
+    applyCount: Int = 1
+  ): Unit = {
     val rnd = new Random(0)
-
-    val kernelH = 3
-    val kernelW = 3
-    val kernelSize = (kernelH, kernelW)
-    val inputC = 3
-    val inputShape = (18, 18, inputC)
-    val filterNum = 9
-    val weightsCycle = 3
-    val idleCycle = 200
-    val stride = 1
+    val (kernelH, kernelW) = kernelSize
 
     val weights = Seq.fill(filterNum)(Seq.fill(kernelH * kernelW)(rnd.nextBoolean()))
 
     val backend = "treadle"
     val args = Array("--backend-name", backend, "--generate-vcd-output", "on", "--no-dce")
 
-    lazy val conv = new BinaryConv2DBinary(kernelSize, weights, inputC, inputShape, weightsCycle, stride)
+    lazy val conv = new BinaryConv2DBinary(kernelSize, weights, inputSize, inputShape, weightsCycle, stride)
     iotesters.Driver.execute(args, () => conv) {
-      c => new BinaryConv2DTester(c, weights, inputShape, stride, idleCycle, 1, weightsCycle, rnd)
+      c => new BinaryConv2DTester(c, weights, inputSize, inputShape, stride, 200, applyCount, weightsCycle, rnd)
     } should be(true)
   }
 
+
+  "binary convolutional layer" should "works correctly" in {
+    binaryConvTest()
+  }
+
+  "binary convolutional layer two stride" should "works correctly" in {
+    binaryConvTest(stride = 2, inputShape = (12, 12, 4))
+  }
+
+  "binary convolution layer 2 stride and input shape (9, 9, 3) (i.e. indivisible against input height and width)" should "works correctly" in {
+    binaryConvTest(stride = 2, inputShape = (9, 9, 3))
+  }
+
+  "binary convolutional layer two stride multi times" should "works correctly" in {
+    binaryConvTest(stride = 2, applyCount = 2)
+  }
+
+  "binary convolution layer 2 input per once against 3 channel" should "works correctly" in {
+    binaryConvTest(inputSize = 2)
+  }
+
   "binary convolutional layer for multiple images" should "works correctly" in {
-    val rnd = new Random(0)
+    binaryConvTest(applyCount = 3)
+  }
 
-    val kernelH = 3
-    val kernelW = 3
-    val kernelSize = (kernelH, kernelW)
-    val inputC = 3
-    val inputShape = (18, 18, inputC)
-    val filterNum = 9
-    val weightsCycle = 3
-    val idleCycle = 200
-    val stride = 1
+  "binary convolution layer too many weights cycles" should "works correctly" in {
+    binaryConvTest(weightsCycle = 15)
+  }
 
-    val weights = Seq.fill(filterNum)(Seq.fill(kernelH * kernelW)(rnd.nextBoolean()))
-
-    val backend = "treadle"
-    val args = Array("--backend-name", backend, "--generate-vcd-output", "on")
-
-    lazy val conv = new BinaryConv2DBinary(kernelSize, weights, weightsCycle, inputShape, weightsCycle, stride)
-    iotesters.Driver.execute(args, () => conv) {
-      c => new BinaryConv2DTester(c, weights, inputShape, stride, idleCycle, 2, weightsCycle, rnd)
-    } should be(true)
+  "binary convolution layer weights cycles indivisible" should "works correctly" in {
+    binaryConvTest(weightsCycle = 4)
+    binaryConvTest(weightsCycle = 2)
+    binaryConvTest(weightsCycle = 5)
   }
 
   "uint8 convolution layer" should "works correctly" in {
